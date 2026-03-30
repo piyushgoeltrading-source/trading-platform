@@ -132,7 +132,7 @@ async def dispatch_backtest(
             },
         )
 
-    if strategy.status == StrategyStatus.ARCHIVED:
+    if strategy.status == StrategyStatus.archived:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={

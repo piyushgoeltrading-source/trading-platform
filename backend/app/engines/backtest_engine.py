@@ -189,12 +189,13 @@ class BacktestEngine:
         if from_date > to_date:
             raise ValueError(f"from_date {from_date} must be <= to_date {to_date}")
 
+        params = dict(strategy.parameters or {})
         result = BacktestResult(
             strategy_id=strategy.id,
             from_date=from_date,
             to_date=to_date,
             run_at_utc=now_utc(),
-            parameters=dict(strategy.parameters or {}),
+            parameters=params,
         )
 
         logger.info(
@@ -212,7 +213,7 @@ class BacktestEngine:
         # Fetch EOD OHLCV bars for the full date range
         try:
             bars: Sequence[OHLCVBar] = await self._adapter.fetch_ohlcv(
-                symbol=str(strategy.instrument),
+                symbol=strategy.instrument.value,
                 from_date=from_date,
                 to_date=to_date,
             )
@@ -321,7 +322,7 @@ class BacktestEngine:
             lots            Number of lots to trade (default: 1)
             action          "BUY" | "SELL" (default: "SELL" — short premium)
         """
-        params = strategy.parameters or {}
+        params = dict(strategy.parameters or {})
         requested_type = str(params.get("option_type", "BOTH")).upper()
         strike_offset = int(params.get("strike_offset", 0))
         lots = int(params.get("lots", 1))
@@ -379,13 +380,13 @@ class BacktestEngine:
                 continue
 
             bar = target_bars[0]
-            entry_price = bar.close
+            entry_price = bar.open
             quantity = lots * self._lot_size
 
             # EOD simulation: enter and exit on the same bar (daily strategy)
             # Real strategies would carry positions — this is the base scaffold
             # The exit price for a same-day simulation = open of next day (approximated as close)
-            exit_price = entry_price  # placeholder — strategy params will drive real logic
+            exit_price = bar.close  # placeholder — strategy params will drive real logic
 
             # P&L: SELL = collect premium (positive); BUY = pay premium (negative)
             if action == "SELL":
