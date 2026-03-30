@@ -1,0 +1,180 @@
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:var(--font-sans);color:var(--color-text-primary);padding:1.5rem 0;}
+
+.section{margin-bottom:1.75rem;}
+.section-title{font-size:11px;font-weight:500;color:var(--color-text-tertiary);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:0.5px solid var(--color-border-tertiary);}
+
+.phase-compare{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:1.75rem;}
+.phase-col{border-radius:var(--border-radius-lg);border:0.5px solid var(--color-border-tertiary);overflow:hidden;}
+.phase-col-header{padding:12px 16px;border-bottom:0.5px solid var(--color-border-tertiary);}
+.phase-col-title{font-size:14px;font-weight:500;}
+.phase-col-sub{font-size:11px;margin-top:2px;color:var(--color-text-secondary);}
+.phase-v1 .phase-col-header{background:var(--color-background-info);}
+.phase-v1 .phase-col-title{color:var(--color-text-info);}
+.phase-v2 .phase-col-header{background:var(--color-background-warning);}
+.phase-v2 .phase-col-title{color:var(--color-text-warning);}
+.phase-col-body{padding:14px 16px;background:var(--color-background-primary);}
+.phase-row{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-bottom:0.5px solid var(--color-border-tertiary);}
+.phase-row:last-child{border-bottom:none;}
+.phase-label{font-size:11px;color:var(--color-text-tertiary);width:80px;flex-shrink:0;padding-top:1px;}
+.phase-value{font-size:12px;color:var(--color-text-primary);line-height:1.4;}
+
+.critical-box{
+  background:var(--color-background-danger);
+  border:0.5px solid var(--color-border-tertiary);
+  border-radius:var(--border-radius-lg);
+  padding:14px 16px;
+  margin-bottom:1.75rem;
+}
+.critical-title{font-size:13px;font-weight:500;color:var(--color-text-danger);margin-bottom:10px;}
+.critical-items{display:flex;flex-direction:column;gap:8px;}
+.critical-item{display:flex;align-items:flex-start;gap:10px;}
+.critical-num{font-size:10px;font-weight:500;color:var(--color-text-danger);background:var(--color-background-primary);width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
+.critical-text{font-size:12px;color:var(--color-text-danger);line-height:1.5;}
+.critical-text strong{font-weight:500;}
+
+.decisions{display:flex;flex-direction:column;gap:8px;}
+.decision-row{
+  display:grid;grid-template-columns:180px minmax(0,1fr) minmax(0,1fr);
+  gap:12px;align-items:start;
+  padding:10px 14px;
+  background:var(--color-background-primary);
+  border:0.5px solid var(--color-border-tertiary);
+  border-radius:var(--border-radius-md);
+}
+.decision-topic{font-size:12px;font-weight:500;color:var(--color-text-primary);}
+.decision-v1{font-size:12px;color:var(--color-text-info);}
+.decision-v2{font-size:12px;color:var(--color-text-warning);}
+
+.col-header-row{display:grid;grid-template-columns:180px minmax(0,1fr) minmax(0,1fr);gap:12px;padding:0 14px;margin-bottom:4px;}
+.col-h{font-size:10px;font-weight:500;color:var(--color-text-tertiary);letter-spacing:0.5px;text-transform:uppercase;}
+
+.smart-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+.smart-card{
+  background:var(--color-background-success);
+  border:0.5px solid var(--color-border-tertiary);
+  border-radius:var(--border-radius-md);
+  padding:12px 14px;
+}
+.smart-card-title{font-size:12px;font-weight:500;color:var(--color-text-success);margin-bottom:4px;}
+.smart-card-desc{font-size:12px;color:var(--color-text-success);line-height:1.4;}
+</style>
+
+<div class="section">
+  <div class="section-title">Two-phase product evolution</div>
+  <div class="phase-compare">
+    <div class="phase-col phase-v1">
+      <div class="phase-col-header">
+        <div class="phase-col-title">Phase V1 — Private platform</div>
+        <div class="phase-col-sub">You + small group of friends</div>
+      </div>
+      <div class="phase-col-body">
+        <div class="phase-row"><span class="phase-label">Users</span><span class="phase-value">5–20 trusted users, invite only</span></div>
+        <div class="phase-row"><span class="phase-label">Auth</span><span class="phase-value">Simple JWT, admin creates accounts</span></div>
+        <div class="phase-row"><span class="phase-label">Brokers</span><span class="phase-value">Zerodha, Nuvama, Kotak Neo</span></div>
+        <div class="phase-row"><span class="phase-label">Billing</span><span class="phase-value">None — free for friends</span></div>
+        <div class="phase-row"><span class="phase-label">Hosting</span><span class="phase-value">AWS free tier, single EC2</span></div>
+        <div class="phase-row"><span class="phase-label">Data</span><span class="phase-value">Shared data source, 1 subscription</span></div>
+        <div class="phase-row"><span class="phase-label">Support</span><span class="phase-value">You handle it personally</span></div>
+        <div class="phase-row"><span class="phase-label">Goal</span><span class="phase-value">Validate, iterate, use in real trading</span></div>
+      </div>
+    </div>
+    <div class="phase-col phase-v2">
+      <div class="phase-col-header">
+        <div class="phase-col-title">Phase V2 — Sellable product</div>
+        <div class="phase-col-sub">Larger paying audience</div>
+      </div>
+      <div class="phase-col-body">
+        <div class="phase-row"><span class="phase-label">Users</span><span class="phase-value">100s–1000s, self-signup</span></div>
+        <div class="phase-row"><span class="phase-label">Auth</span><span class="phase-value">Multi-tenant, user isolation, roles</span></div>
+        <div class="phase-row"><span class="phase-label">Brokers</span><span class="phase-value">5+ brokers, user brings own API key</span></div>
+        <div class="phase-row"><span class="phase-label">Billing</span><span class="phase-value">Subscription tiers (Razorpay/Stripe)</span></div>
+        <div class="phase-row"><span class="phase-label">Hosting</span><span class="phase-value">Auto-scaling, load balancer, RDS</span></div>
+        <div class="phase-row"><span class="phase-label">Data</span><span class="phase-value">Per-user data isolation, audit logs</span></div>
+        <div class="phase-row"><span class="phase-label">Support</span><span class="phase-value">Ticketing, docs, onboarding flow</span></div>
+        <div class="phase-row"><span class="phase-label">Goal</span><span class="phase-value">Revenue, retention, SEBI compliance</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="critical-box">
+  <div class="critical-title">Build V1 right — so V2 doesn't require a full rewrite</div>
+  <div class="critical-items">
+    <div class="critical-item"><div class="critical-num">1</div><div class="critical-text"><strong>Multi-tenancy from day one.</strong> Every DB table needs a user_id. Every strategy, backtest, position, order must be scoped to a user. Adding this later = full database migration.</div></div>
+    <div class="critical-item"><div class="critical-num">2</div><div class="critical-text"><strong>Broker API keys must be per-user, encrypted.</strong> Never hardcode or share keys. Store encrypted per user in DB from the start.</div></div>
+    <div class="critical-item"><div class="critical-num">3</div><div class="critical-text"><strong>Role-based access control (RBAC).</strong> Build admin vs. user roles now. You'll need admin tools to manage users when you scale.</div></div>
+    <div class="critical-item"><div class="critical-num">4</div><div class="critical-text"><strong>API rate limiting.</strong> Brokers throttle API calls. Design a queue system early so it scales when 100 users fire orders simultaneously.</div></div>
+    <div class="critical-item"><div class="critical-num">5</div><div class="critical-text"><strong>SEBI compliance awareness.</strong> Selling algo trading tools in India requires SEBI registration as an algo provider. Plan for this before V2 launch.</div></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Key architectural decisions — V1 vs V2 impact</div>
+  <div class="col-header-row">
+    <div class="col-h">Decision</div>
+    <div class="col-h">V1 approach</div>
+    <div class="col-h">V2 upgrade path</div>
+  </div>
+  <div class="decisions">
+    <div class="decision-row">
+      <div class="decision-topic">Database schema</div>
+      <div class="decision-v1">user_id on every table from day 1</div>
+      <div class="decision-v2">Add org/team layer on top</div>
+    </div>
+    <div class="decision-row">
+      <div class="decision-topic">Broker API keys</div>
+      <div class="decision-v1">Encrypted per user in DB</div>
+      <div class="decision-v2">AWS Secrets Manager or Vault</div>
+    </div>
+    <div class="decision-row">
+      <div class="decision-topic">Strategy execution</div>
+      <div class="decision-v1">Direct broker API calls</div>
+      <div class="decision-v2">Job queue (Celery + Redis)</div>
+    </div>
+    <div class="decision-row">
+      <div class="decision-topic">Historical data</div>
+      <div class="decision-v1">One shared paid subscription</div>
+      <div class="decision-v2">Own data pipeline + storage</div>
+    </div>
+    <div class="decision-row">
+      <div class="decision-topic">AI layer</div>
+      <div class="decision-v1">Claude API, per-request calls</div>
+      <div class="decision-v2">Fine-tuned model + usage billing</div>
+    </div>
+    <div class="decision-row">
+      <div class="decision-topic">Billing</div>
+      <div class="decision-v1">Not needed</div>
+      <div class="decision-v2">Razorpay subscriptions</div>
+    </div>
+    <div class="decision-row">
+      <div class="decision-topic">Hosting</div>
+      <div class="decision-v1">Single EC2 + free tier</div>
+      <div class="decision-v2">Auto-scaling groups + RDS</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Smart decisions to make now that pay off at V2</div>
+  <div class="smart-choices">
+    <div class="smart-card">
+      <div class="smart-card-title">Use PostgreSQL schemas for tenancy</div>
+      <div class="smart-card-desc">A single Postgres instance can use separate schemas per user group — easy V1, scales cleanly to V2 without migration.</div>
+    </div>
+    <div class="smart-card">
+      <div class="smart-card-title">Build a clean REST API from day 1</div>
+      <div class="smart-card-desc">Your FastAPI backend should be fully decoupled. V2 can add a mobile app or third-party integrations without touching core logic.</div>
+    </div>
+    <div class="smart-card">
+      <div class="smart-card-title">Log everything</div>
+      <div class="smart-card-desc">Every order, strategy run, backtest, and API call should be logged with timestamps. Invaluable for debugging, auditing, and SEBI compliance later.</div>
+    </div>
+    <div class="smart-card">
+      <div class="smart-card-title">Feature flags from the start</div>
+      <div class="smart-card-desc">Build a simple feature flag system. Toggle features per user — essential for rolling out V2 features to beta users before full launch.</div>
+    </div>
+  </div>
+</div>

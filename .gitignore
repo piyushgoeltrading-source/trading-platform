@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables (IMPORTANT)
+.env
+.env.*
+
+# Logs
+*.log
+logs/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Node (frontend)
+node_modules/
+.next/
+out/
+
+# Build
+dist/
+build/
+
+# Cache
+.pytest_cache/
+.mypy_cache/
+
+# Temporary / system files
+*.tmp
+*.swp
+
+# Office temp files
+.~lock.*
