@@ -38,7 +38,7 @@ import pandas as pd
 
 from app.core.logging import get_structured_logger
 from app.core.time_utils import now_utc
-from app.data_ingestion.adapters.base_adapter import (
+from app.data.adapters.base_adapter import (
     ChainSnapshot,
     DataAdapter,
     DataAdapterError,

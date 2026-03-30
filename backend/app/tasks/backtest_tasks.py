@@ -34,7 +34,7 @@ from celery import Task
 from app.core.config import settings
 from app.core.logging import get_structured_logger
 from app.core.time_utils import now_utc
-from app.data_ingestion.adapters.nse_adapter import NSEAdapter
+from app.data.adapters.nse_adapter import NSEAdapter
 from app.engines.backtest_engine import BacktestEngine, BacktestResult
 from worker.worker import celery_app
 

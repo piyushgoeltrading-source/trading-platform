@@ -24,7 +24,7 @@ HTTP status codes:
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from options_service import (
+from app.services.options_service import (
     ErrorCode,
     FeedDegradedError,
     InvalidPayloadError,

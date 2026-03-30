@@ -20,11 +20,10 @@ To monitor tasks:
 
 from celery import Celery
 from app.core.config import settings
-from app.core.logging import configure_logging, get_logger
+from app.core.logging import configure_root_logging, get_structured_logger
 
-# Configure structured logging for the worker process
-configure_logging()
-logger = get_logger(__name__)
+configure_root_logging()
+logger = get_structured_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Celery app

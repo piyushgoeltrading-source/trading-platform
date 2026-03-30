@@ -161,9 +161,7 @@ def create_app() -> FastAPI:
 
 def _mount_routers(app: FastAPI) -> None:
     """Mount all API routers with their version prefix."""
-    from app.api.options import router as options_router
-    from app.api.strategy import router as strategy_router
-    from app.api.backtest import router as backtest_router
+    from app.api.v1.api import api_router
 
     # Phase 0 routers (auth + users) — import when those files exist
     # from app.api.auth import router as auth_router
@@ -171,9 +169,7 @@ def _mount_routers(app: FastAPI) -> None:
     # app.include_router(auth_router, prefix="/api/v1")
     # app.include_router(users_router, prefix="/api/v1")
 
-    app.include_router(options_router, prefix="/api/v1")
-    app.include_router(strategy_router, prefix="/api/v1")
-    app.include_router(backtest_router, prefix="/api/v1")
+    app.include_router(api_router, prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------

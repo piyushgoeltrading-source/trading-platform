@@ -100,7 +100,7 @@ async def create_strategy(
         description=payload.description,
         instrument=payload.instrument,
         parameters=payload.parameters,
-        status=StrategyStatus.DRAFT,
+        status=StrategyStatus.draft,
     )
 
     db.add(strategy)
@@ -193,10 +193,10 @@ async def get_strategy(
 
 # Valid status transitions — enforced to prevent illegal state changes
 _ALLOWED_TRANSITIONS: dict[StrategyStatus, set[StrategyStatus]] = {
-    StrategyStatus.DRAFT:    {StrategyStatus.ACTIVE, StrategyStatus.ARCHIVED},
-    StrategyStatus.ACTIVE:   {StrategyStatus.PAUSED, StrategyStatus.ARCHIVED},
-    StrategyStatus.PAUSED:   {StrategyStatus.ACTIVE, StrategyStatus.ARCHIVED},
-    StrategyStatus.ARCHIVED: set(),  # Terminal state — no transitions out
+    StrategyStatus.draft:    {StrategyStatus.active, StrategyStatus.archived},
+    StrategyStatus.active:   {StrategyStatus.paused, StrategyStatus.archived},
+    StrategyStatus.paused:   {StrategyStatus.active, StrategyStatus.archived},
+    StrategyStatus.archived: set(),  # Terminal state — no transitions out
 }
 
 
@@ -219,7 +219,7 @@ async def update_strategy(
     strategy = await _get_strategy_or_404(strategy_id, current_user.id, db)
 
     # Block edits to archived strategies
-    if strategy.status == StrategyStatus.ARCHIVED:
+    if strategy.status == StrategyStatus.archived:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -296,8 +296,8 @@ async def delete_strategy(
     """
     strategy = await _get_strategy_or_404(strategy_id, current_user.id, db)
 
-    if strategy.status != StrategyStatus.ARCHIVED:
-        strategy.status = StrategyStatus.ARCHIVED
+    if strategy.status != StrategyStatus.archived:
+        strategy.status = StrategyStatus.archived
         await db.commit()
 
         logger.info(
