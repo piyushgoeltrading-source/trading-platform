@@ -104,8 +104,8 @@ async def create_strategy(
     )
 
     db.add(strategy)
-    await db.commit()
-    await db.refresh(strategy)
+    db.commit()
+    db.refresh(strategy)
 
     logger.info(
         "Strategy created",
@@ -259,8 +259,8 @@ async def update_strategy(
     if payload.parameters is not None:
         strategy.parameters = payload.parameters
 
-    await db.commit()
-    await db.refresh(strategy)
+    db.commit()
+    db.refresh(strategy)
 
     logger.info(
         "Strategy updated",
@@ -298,7 +298,7 @@ async def delete_strategy(
 
     if strategy.status != StrategyStatus.archived:
         strategy.status = StrategyStatus.archived
-        await db.commit()
+        db.commit()
 
         logger.info(
             "Strategy archived",
