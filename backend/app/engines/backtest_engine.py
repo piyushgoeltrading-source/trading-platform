@@ -324,64 +324,145 @@ class BacktestEngine:
         """
         params = dict(strategy.parameters or {})
         requested_type = str(params.get("option_type", "BOTH")).upper()
-        strike_offset = int(params.get("strike_offset", 0))
-        lots = int(params.get("lots", 1))
         action = str(params.get("action", "SELL")).upper()
+
+        try:
+            strike_offset = int(params.get("strike_offset", 0))
+        except (TypeError, ValueError):
+            return 0.0, [], [f"{trading_date}: invalid strike_offset {params.get('strike_offset')!r} in parameters"]
+
+        try:
+            lots = int(params.get("lots", 1))
+        except (TypeError, ValueError):
+            return 0.0, [], [f"{trading_date}: invalid lots {params.get('lots')!r} in parameters"]
 
         if action not in ("BUY", "SELL"):
             return 0.0, [], [f"{trading_date}: invalid action {action!r} in parameters"]
+
+        if lots <= 0:
+            return 0.0, [], [f"{trading_date}: lots must be > 0, got {lots!r}"]
+
+        if requested_type not in ("CE", "PE", "BOTH"):
+            return 0.0, [], [f"{trading_date}: invalid option_type {requested_type!r} in parameters"]
 
         # Filter to options only
         options = [
             b for b in bars
             if b.option_type in ("CE", "PE")
             and b.strike is not None
+            and b.open is not None
+            and b.close is not None
+            and b.open > 0
+            and b.close > 0
         ]
 
         if not options:
             return 0.0, [], []
 
         # Determine which option types to trade
-        types_to_trade: list[str] = []
         if requested_type == "BOTH":
             types_to_trade = ["CE", "PE"]
-        elif requested_type in ("CE", "PE"):
-            types_to_trade = [requested_type]
         else:
-            return 0.0, [], [
-                f"{trading_date}: unknown option_type {requested_type!r} in parameters"
-            ]
+            types_to_trade = [requested_type]
 
         day_pnl = 0.0
         trades: list[TradeRecord] = []
         errors: list[str] = []
+        executed_types: set[str] = set()
 
         for opt_type in types_to_trade:
+            all_type_bars = [b for b in options if b.option_type == opt_type]
+            if not all_type_bars:
+                errors.append(f"{trading_date}: no bars available for option_type={opt_type}")
+                continue
+
+            available_expiries = sorted({b.expiry for b in all_type_bars if b.expiry is not None})
+            if not available_expiries:
+                errors.append(f"{trading_date}: no expiry available for option_type={opt_type}")
+                continue
+
+            selected_expiry = available_expiries[0]
+
             type_bars = sorted(
-                [b for b in options if b.option_type == opt_type],
+                [b for b in all_type_bars if b.expiry == selected_expiry],
                 key=lambda b: b.strike or 0,
             )
-            if not type_bars:
-                continue
 
             # ATM = strike closest to the median of available strikes
-            strikes = sorted({b.strike for b in type_bars if b.strike})
+            strikes = sorted({b.strike for b in type_bars if b.strike is not None})
             if not strikes:
+                errors.append(f"{trading_date}: no strikes available for option_type={opt_type}")
                 continue
 
-            # Simple ATM selection: middle strike
-            atm_idx = len(strikes) // 2
-            target_idx = min(atm_idx + strike_offset, len(strikes) - 1)
+            underlying_candidates = [
+                b.underlying_price for b in type_bars
+                if b.expiry == selected_expiry
+                and b.underlying_price is not None
+                and b.underlying_price > 0
+            ]
+
+            if not underlying_candidates:
+                errors.append(f"{trading_date}: invalid underlying_price for option_type={opt_type}")
+                continue
+
+            underlying_price = underlying_candidates[0]
+            if underlying_price is None or underlying_price <= 0:
+                errors.append(f"{trading_date}: invalid underlying_price for option_type={opt_type}")
+                continue
+
+            atm_idx = min(range(len(strikes)), key=lambda i: abs(strikes[i] - underlying_price))
+            target_idx = max(0, min(atm_idx + strike_offset, len(strikes) - 1))
             target_strike = strikes[target_idx]
 
             # Find the bar for this strike
-            target_bars = [b for b in type_bars if b.strike == target_strike]
+            target_bars = [
+                b for b in type_bars
+                if b.strike == target_strike and b.expiry == selected_expiry
+            ]
+
             if not target_bars:
+                errors.append(
+                    f"{trading_date}: no bar found for option_type={opt_type}, strike={target_strike}"
+                )
                 continue
 
-            bar = target_bars[0]
+            valid_target_bars = [
+                b for b in target_bars
+                if b.underlying_price is not None and b.underlying_price > 0
+            ]
+
+            if not valid_target_bars:
+                errors.append(
+                    f"{trading_date}: no valid bar with underlying_price for option_type={opt_type}, strike={target_strike}, expiry={selected_expiry}"
+                )
+                continue
+
+            bar = sorted(
+                valid_target_bars,
+                key=lambda b: b.timestamp,
+            )[0]
+
             entry_price = bar.open
+
+            # EOD simulation
+            exit_price = bar.close
+
+            if self._lot_size <= 0:
+                return 0.0, [], [f"{trading_date}: invalid lot size configured: {self._lot_size!r}"]
+
             quantity = lots * self._lot_size
+
+            turnover = (entry_price + exit_price) * quantity
+
+            try:
+                cost_rate = float(params.get("cost_rate", 0.001))
+            except (TypeError, ValueError):
+                return 0.0, [], [f"{trading_date}: invalid cost_rate {params.get('cost_rate')!r}"]
+
+            if cost_rate < 0:
+                return 0.0, [], [f"{trading_date}: cost_rate must be >= 0, got {cost_rate!r}"]
+
+            transaction_cost = turnover * cost_rate
 
             # EOD simulation: enter and exit on the same bar (daily strategy)
             # Real strategies would carry positions — this is the base scaffold
@@ -390,9 +471,13 @@ class BacktestEngine:
 
             # P&L: SELL = collect premium (positive); BUY = pay premium (negative)
             if action == "SELL":
-                trade_pnl = (entry_price - exit_price) * quantity
+                gross_pnl = (entry_price - exit_price) * quantity
             else:
-                trade_pnl = (exit_price - entry_price) * quantity
+                gross_pnl = (exit_price - entry_price) * quantity
+
+            trade_pnl = gross_pnl - transaction_cost
+
+            offset_label = f"ATM{strike_offset:+d}"
 
             trade = TradeRecord(
                 date=trading_date,
@@ -406,10 +491,15 @@ class BacktestEngine:
                 exit_price=exit_price,
                 exit_date=trading_date,
                 realised_pnl=round(trade_pnl, 2),
-                notes=f"ATM+{strike_offset} {opt_type}",
+                notes=f"{offset_label} {opt_type}",
             )
             trades.append(trade)
+            executed_types.add(opt_type)
             day_pnl += trade_pnl
+
+        missing_types = [opt for opt in types_to_trade if opt not in executed_types]
+        for opt in missing_types:
+            errors.append(f"{trading_date}: no trade executed for requested option_type={opt}")
 
         return round(day_pnl, 2), trades, errors
 
