@@ -24,9 +24,9 @@ from enum import Enum
 from typing import Callable, Optional
 import logging
 
-from app.core.logging import get_logger, log_websocket_reconnect
+from app.core.logging import get_structured_logger  # Bug 3 fix: get_logger/log_websocket_reconnect do not exist
 
-logger = get_logger(__name__)
+logger = get_structured_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -292,11 +292,16 @@ class WebSocketManager:
                 feed_state.reconnect_attempts += 1
 
                 # RULE: Log every reconnect attempt
-                log_websocket_reconnect(
-                    attempt=attempt,
-                    backoff_seconds=delay,
-                    feed="NSE_OPTIONS",
-                    reason=str(e),
+                # Bug 3 fix: log_websocket_reconnect does not exist — use inline structured log
+                logger.warning(
+                    "websocket_reconnect_attempt",
+                    extra={
+                        "event": "WEBSOCKET_RECONNECT",
+                        "attempt": attempt,
+                        "backoff_seconds": delay,
+                        "feed": "NSE_OPTIONS",
+                        "reason": str(e),
+                    },
                 )
 
                 await feed_state.update_status(FeedStatus.DOWN)

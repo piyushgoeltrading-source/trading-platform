@@ -5,6 +5,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+from app.models.user import BrokerName
 
 
 class OrderStatus(str, enum.Enum):
@@ -40,6 +41,9 @@ class Order(Base):
     qty = Column(Integer, nullable=False)
     instrument = Column(String, nullable=False)
 
+    # Broker — which broker was used to place this order
+    broker = Column(SAEnum(BrokerName, native_enum=False), nullable=False, default=BrokerName.zerodha)
+
     # Broker response fields — populated after SENT/FILLED
     broker_order_id = Column(String, nullable=True)
     rejection_reason = Column(String, nullable=True)
@@ -52,7 +56,7 @@ class Order(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<Order id={self.id} status={self.status} "
+            f"<Order id={self.id} status={self.status} broker={self.broker} "
             f"strike={self.strike} side={self.side} qty={self.qty} user_id={self.user_id}>"
         )
 

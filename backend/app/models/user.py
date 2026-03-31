@@ -11,6 +11,11 @@ class UserRole(str, enum.Enum):
     user = "user"
 
 
+class BrokerName(str, enum.Enum):
+    zerodha = "zerodha"
+    nuvama = "nuvama"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -20,7 +25,8 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     role = Column(SAEnum(UserRole, native_enum=False), nullable=False, default=UserRole.user)
+    broker = Column(SAEnum(BrokerName, native_enum=False), nullable=False, default=BrokerName.zerodha)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     def __repr__(self) -> str:
-        return f"<User id={self.id} email={self.email} role={self.role}>"
+        return f"<User id={self.id} email={self.email} role={self.role} broker={self.broker}>"

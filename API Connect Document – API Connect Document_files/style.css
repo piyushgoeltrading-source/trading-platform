@@ -1,0 +1,286 @@
+@font-face {
+  font-family: "edel_icon";
+  src: url("./fonts/edel_icon.eot?pi6bj3");
+  src: url("./fonts/edel_icon.eot?pi6bj3#iefix") format("embedded-opentype"),
+    url("./fonts/edel_icon.ttf?pi6bj3") format("truetype"),
+    url("./fonts/edel_icon.woff?pi6bj3") format("woff"),
+    url("./fonts/edel_icon.svg?pi6bj3#edel_icon") format("svg");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+[class^="edel-icon-"],
+[class*=" edel-icon-"] {
+  /* use !important to prevent issues with browser extensions that change fonts */
+  font-family: "edel_icon" !important;
+  speak: never;
+  font-style: normal;
+  font-weight: normal;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+
+  /* Better Font Rendering =========== */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.edel-icon-logout:before {
+  content: "\e94a";
+}
+.edel-icon-cube:before {
+  content: "\e94b";
+}
+.edel-icon-bars:before {
+  content: "\e94c";
+}
+.edel-icon-create:before {
+  content: "\e949";
+}
+.edel-icon-dots-three-horizontal:before {
+  content: "\e948";
+}
+.edel-icon-request-send:before {
+  content: "\e947";
+}
+.edel-icon-blocked:before {
+  content: "\e943";
+}
+.edel-icon-refresh:before {
+  content: "\e944";
+}
+.edel-icon-link-icon:before {
+  content: "\e945";
+}
+.edel-icon-right-arrow:before {
+  content: "\e946";
+}
+.edel-icon-coins:before {
+  content: "\e942";
+}
+.edel-icon-play:before {
+  content: "\e941";
+}
+.edel-icon-trash:before {
+  content: "\e940";
+}
+.edel-icon-file-upload:before {
+  content: "\e93f";
+}
+.edel-icon-excel:before {
+  content: "\e93e";
+}
+.edel-icon-timer:before {
+  content: "\e93c";
+}
+.edel-icon-flash:before {
+  content: "\e93d";
+}
+.edel-icon-user1:before {
+  content: "\e93b";
+}
+.edel-icon-email:before {
+  content: "\e936";
+}
+.edel-icon-fax:before {
+  content: "\e937";
+}
+.edel-icon-link:before {
+  content: "\e938";
+}
+.edel-icon-phone1:before {
+  content: "\e939";
+}
+.edel-icon-website:before {
+  content: "\e93a";
+}
+.edel-icon-edel-logo1:before {
+  content: "\e935";
+}
+.edel-icon-eye-cross:before {
+  content: "\e934";
+}
+.edel-icon-star-filled:before {
+  content: "\e932";
+}
+.edel-icon-star-unfilled:before {
+  content: "\e933";
+}
+.edel-icon-communication:before {
+  content: "\e92c";
+}
+.edel-icon-fast-time:before {
+  content: "\e92d";
+}
+.edel-icon-people-talk:before {
+  content: "\e92e";
+}
+.edel-icon-phone:before {
+  content: "\e92f";
+}
+.edel-icon-star-plus:before {
+  content: "\e930";
+}
+.edel-icon-user-circle:before {
+  content: "\e92b";
+}
+.edel-icon-password:before {
+  content: "\e928";
+}
+.edel-icon-forgot-login:before {
+  content: "\e927";
+}
+.edel-icon-unlock:before {
+  content: "\e929";
+}
+.edel-icon-yob:before {
+  content: "\e92a";
+}
+.edel-icon-edit:before {
+  content: "\e926";
+}
+.edel-icon-eye:before {
+  content: "\e925";
+}
+.edel-icon-purse:before {
+  content: "\e924";
+}
+.edel-icon-arrow-right:before {
+  content: "\e923";
+}
+.edel-icon-insufficient-funds:before {
+  content: "\e922";
+}
+.edel-icon-minus:before {
+  content: "\e920";
+}
+.edel-icon-plus:before {
+  content: "\e921";
+}
+.edel-icon-sort-2:before {
+  content: "\e91f";
+}
+.edel-icon-select:before {
+  content: "\e91e";
+}
+.edel-icon-sort-1:before {
+  content: "\e91c";
+}
+.edel-icon-filter:before {
+  content: "\e91d";
+}
+.edel-icon-clock:before {
+  content: "\e904";
+}
+.edel-icon-key-horz:before {
+  content: "\e91a";
+}
+.edel-icon-calendar:before {
+  content: "\e919";
+}
+.edel-icon-star:before {
+  content: "\e916";
+}
+.edel-icon-double-arrow-left:before {
+  content: "\e914";
+}
+.edel-icon-double-arrow-right:before {
+  content: "\e915";
+}
+.edel-icon-search:before {
+  content: "\e913";
+}
+.edel-icon-arrow-left:before {
+  content: "\e912";
+}
+.edel-icon-arrow-down:before {
+  content: "\e911";
+}
+.edel-icon-tick:before {
+  content: "\e906";
+}
+.edel-icon-download:before {
+  content: "\e910";
+}
+.edel-icon-user:before {
+  content: "\e90f";
+}
+.edel-icon-faqs:before {
+  content: "\e90d";
+}
+.edel-icon-login-help:before {
+  content: "\e90e";
+}
+.edel-icon-bulb:before {
+  content: "\e90c";
+}
+.edel-icon-locate-us:before {
+  content: "\e907";
+}
+.edel-icon-edel-logo:before {
+  content: "\e908";
+}
+.edel-icon-announce:before {
+  content: "\e909";
+}
+.edel-icon-email-us:before {
+  content: "\e90a";
+}
+.edel-icon-call:before {
+  content: "\e90b";
+}
+.edel-icon-twitter:before {
+  content: "\f099";
+}
+.edel-icon-facebook:before {
+  content: "\f09a";
+}
+.edel-icon-google-plus:before {
+  content: "\f0d5";
+}
+.edel-icon-linkedin:before {
+  content: "\f0e1";
+}
+.edel-icon-youtube:before {
+  content: "\f167";
+}
+.edel-icon-instagram:before {
+  content: "\f16d";
+}
+.edel-icon-whatsapp:before {
+  content: "\f232";
+}
+.edel-icon-caret-down:before {
+  content: "\f0d7";
+}
+.edel-icon-caret-up:before {
+  content: "\f0d8";
+}
+.edel-icon-call1:before {
+  content: "\e905";
+}
+.edel-icon-close:before {
+  content: "\e91b";
+}
+.edel-icon-collapse:before {
+  content: "\e903";
+}
+.edel-icon-expand:before {
+  content: "\e901";
+}
+.edel-icon-go:before {
+  content: "\e902";
+}
+.edel-icon-exclamation:before {
+  content: "\e900";
+}
+.edel-icon-comment:before {
+  content: "\e917";
+}
+.edel-icon-tooltip:before {
+  content: "\e918";
+}
+.edel-icon-timeout:before {
+  content: "\e931";
+}

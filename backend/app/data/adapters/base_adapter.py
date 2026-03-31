@@ -59,6 +59,7 @@ class OHLCVBar:
     expiry: date | None = None
     strike: float | None = None
     option_type: str | None = None  # "CE" | "PE" | None
+    underlying_price: float | None = None  # Bug 5 fix: backtest_engine.py references bar.underlying_price
 
     def __post_init__(self) -> None:
         if self.timestamp.tzinfo is None:

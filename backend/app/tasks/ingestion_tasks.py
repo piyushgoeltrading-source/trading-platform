@@ -9,10 +9,13 @@ connection and keeps it alive via WebSocketManager's reconnect logic.
 """
 
 import asyncio
-from worker.worker import celery_app
-from app.core.logging import get_logger
+import redis as redis_lib
 
-logger = get_logger(__name__)
+from worker.worker import celery_app
+from app.core.logging import get_structured_logger  # Bug 4 fix: was get_logger (doesn't exist)
+from app.core.config import settings
+
+logger = get_structured_logger(__name__)
 
 
 @celery_app.task(
@@ -20,28 +23,37 @@ logger = get_logger(__name__)
     bind=True,
     max_retries=None,   # Never give up — WebSocketManager handles reconnects
 )
-def start_option_chain_ingestor(self, instrument_tokens: list[int] = None):
+def start_option_chain_ingestor(self):
     """
     Start the option chain ingestor as a long-running Celery task.
 
     This task starts the WebSocket connection and blocks indefinitely.
     WebSocketManager handles all reconnects internally.
 
-    Args:
-        instrument_tokens: Optional list of NSE instrument tokens to subscribe.
-                           Defaults to Nifty + BankNifty index tokens.
-
     To start from CLI:
         celery -A worker.worker call ingestion.start_option_chain_ingestor
     """
     from app.data_ingestion.option_chain_ingestor import OptionChainIngestor
+    from app.data_ingestion.websocket_manager import WebSocketManager
 
-    logger.info(
-        "Starting option chain ingestor task",
-        extra={"tokens": instrument_tokens},
+    logger.info("Starting option chain ingestor task")
+
+    # Bug 4 fix: OptionChainIngestor takes (redis_client, websocket_manager)
+    # NOT instrument_tokens — build dependencies and pass them correctly
+    redis_client = redis_lib.Redis(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        db=0,
+        decode_responses=True,
     )
 
-    ingestor = OptionChainIngestor(instrument_tokens=instrument_tokens)
+    # on_tick callback is wired inside OptionChainIngestor.start()
+    websocket_manager = WebSocketManager(on_tick=None, heartbeat_timeout=10)
+
+    ingestor = OptionChainIngestor(
+        redis_client=redis_client,
+        websocket_manager=websocket_manager,
+    )
 
     try:
         asyncio.run(ingestor.start())
@@ -51,4 +63,3 @@ def start_option_chain_ingestor(self, instrument_tokens: list[int] = None):
             extra={"error": str(e)},
         )
         raise
-

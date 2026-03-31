@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_async_db          # Bug 2 fix: was get_db (sync)
 from app.core.security import get_current_user
 from app.core.logging import get_structured_logger
 from app.core.time_utils import now_utc
@@ -88,7 +88,7 @@ async def _get_strategy_or_404(
 async def create_strategy(
     payload: StrategyCreate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),   # Bug 2 fix: was get_db
 ) -> StrategyResponse:
     """
     Create a new strategy for the authenticated user.
@@ -104,8 +104,8 @@ async def create_strategy(
     )
 
     db.add(strategy)
-    db.commit()
-    db.refresh(strategy)
+    await db.commit()           # Bug 2 fix: was db.commit() (sync)
+    await db.refresh(strategy)  # Bug 2 fix: was db.refresh() (sync)
 
     logger.info(
         "Strategy created",
@@ -139,7 +139,7 @@ async def list_strategies(
         description="Filter by strategy status",
     ),
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),   # Bug 2 fix: was get_db
 ) -> StrategyListResponse:
     """
     Return a paginated list of strategies owned by the authenticated user.
@@ -180,7 +180,7 @@ async def list_strategies(
 async def get_strategy(
     strategy_id: int,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),   # Bug 2 fix: was get_db
 ) -> StrategyResponse:
     """Return a single strategy by ID. User must own the strategy."""
     strategy = await _get_strategy_or_404(strategy_id, current_user.id, db)
@@ -209,7 +209,7 @@ async def update_strategy(
     strategy_id: int,
     payload: StrategyUpdate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),   # Bug 2 fix: was get_db
 ) -> StrategyResponse:
     """
     Update a strategy. Only provided fields are changed.
@@ -259,8 +259,8 @@ async def update_strategy(
     if payload.parameters is not None:
         strategy.parameters = payload.parameters
 
-    db.commit()
-    db.refresh(strategy)
+    await db.commit()           # Bug 2 fix: was db.commit() (sync)
+    await db.refresh(strategy)  # Bug 2 fix: was db.refresh() (sync)
 
     logger.info(
         "Strategy updated",
@@ -287,7 +287,7 @@ async def update_strategy(
 async def delete_strategy(
     strategy_id: int,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),   # Bug 2 fix: was get_db
 ) -> None:
     """
     Soft-delete a strategy by setting its status to ARCHIVED.
@@ -298,7 +298,7 @@ async def delete_strategy(
 
     if strategy.status != StrategyStatus.archived:
         strategy.status = StrategyStatus.archived
-        db.commit()
+        await db.commit()       # Bug 2 fix: was db.commit() (sync)
 
         logger.info(
             "Strategy archived",
