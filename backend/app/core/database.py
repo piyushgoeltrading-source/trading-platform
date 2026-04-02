@@ -71,11 +71,14 @@ def get_db():
 # DATABASE_URL driver is auto-swapped to asyncpg below — no second env var needed.
 # ---------------------------------------------------------------------------
 
-_async_url = settings.DATABASE_URL.replace(
-    "postgresql+psycopg2://", "postgresql+asyncpg://"
-).replace(
-    "postgresql://", "postgresql+asyncpg://"
+# Derive the async URL from DATABASE_URL regardless of which scheme it uses.
+# Handles: postgresql+psycopg2://, postgresql://, or postgresql+asyncpg:// (defensive).
+_base_url = (
+    settings.DATABASE_URL
+    .replace("postgresql+psycopg2://", "postgresql://")
+    .replace("postgresql+asyncpg://", "postgresql://")
 )
+_async_url = _base_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 async_engine = create_async_engine(
     _async_url,

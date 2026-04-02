@@ -169,8 +169,8 @@ async def zerodha_callback(
     try:
         access_token = await asyncio.to_thread(
             exchange_request_token,
-            request_token,
             current_user.id,
+            request_token,
         )
     except Exception as exc:
         logger.error(
@@ -241,13 +241,13 @@ async def nuvama_login(
 
     This is OAuth requestId flow — NOT TOTP.
     """
-    from app.brokers.nuvama.auth import authenticate_with_request_id
+    from app.brokers.nuvama.auth import exchange_request_id
 
     try:
         access_token = await asyncio.to_thread(
-            authenticate_with_request_id,
-            payload.request_id,
+            exchange_request_id,
             current_user.id,
+            payload.request_id,
         )
     except Exception as exc:
         logger.error(

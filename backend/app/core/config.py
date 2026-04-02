@@ -23,8 +23,9 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Database
     # -------------------------------------------------------------------------
-    DATABASE_URL: str = "postgresql+asyncpg://piyu:%40password@localhost:5432/piyushtrade"
+    DATABASE_URL: str = "postgresql+psycopg2://piyu:%40password@localhost:5432/piyushtrade"
     # Note: @ in password must be encoded as %40 in .env DATABASE_URL
+    # Note: Use psycopg2 scheme here — database.py derives the asyncpg URL automatically.
 
     # -------------------------------------------------------------------------
     # Redis
