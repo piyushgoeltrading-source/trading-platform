@@ -72,6 +72,21 @@ class StrategyCreate(BaseModel):
             raise ValueError(f"parameters must be JSON-serializable: {exc}") from exc
         return v
 
+    @field_validator("parameters")
+    @classmethod
+    def parameters_business_rules(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """
+        Business validation for strategy parameters.
+
+        Enforces:
+        - lots must be a positive integer (if provided)
+        """
+        lots = v.get("lots")
+        if lots is not None:
+            if not isinstance(lots, int) or lots <= 0:
+                raise ValueError("parameters.lots must be a positive integer")
+        return v
+
     model_config = {"use_enum_values": True}
 
 
