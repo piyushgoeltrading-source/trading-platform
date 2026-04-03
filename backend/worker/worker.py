@@ -19,6 +19,9 @@ To monitor tasks:
 """
 
 from celery import Celery
+from celery.schedules import crontab
+from kombu import Exchange, Queue
+
 from app.core.config import settings
 from app.core.logging import configure_root_logging, get_structured_logger
 
@@ -58,9 +61,43 @@ celery_app.conf.update(
     task_default_retry_delay=10,    # seconds
     task_max_retries=3,
 
-    # Routing — Phase 2 will add dedicated queues for backtest vs ingestion
+    # Routing — explicit queues for operational clarity
     task_default_queue="default",
+    task_default_exchange="piyushtrade",
+    task_default_exchange_type="direct",
+    task_default_routing_key="default",
+
+    # Do not let Celery interfere with our structured root logging
+    worker_hijack_root_logger=False,
+
+    # Emit task-sent events so monitoring tools can see queue lifecycle more clearly
+    task_send_sent_event=True,
+
+    # Connection resilience
+    broker_connection_retry_on_startup=True,
 )
+
+# ---------------------------------------------------------------------------
+# Explicit queues
+# Separate workload types so they can be scaled independently later.
+# ---------------------------------------------------------------------------
+celery_app.conf.task_queues = (
+    Queue("default", Exchange("piyushtrade", type="direct"), routing_key="default"),
+    Queue("backtest", Exchange("piyushtrade", type="direct"), routing_key="backtest"),
+    Queue("ingestion", Exchange("piyushtrade", type="direct"), routing_key="ingestion"),
+    Queue("reconciliation", Exchange("piyushtrade", type="direct"), routing_key="reconciliation"),
+)
+
+# ---------------------------------------------------------------------------
+# Task routes
+# Keep heavy or latency-insensitive work off the default queue.
+# ---------------------------------------------------------------------------
+celery_app.conf.task_routes = {
+    "tasks.run_backtest": {"queue": "backtest", "routing_key": "backtest"},
+    "tasks.option_chain_ingest": {"queue": "ingestion", "routing_key": "ingestion"},
+    "tasks.reconcile_positions": {"queue": "reconciliation", "routing_key": "reconciliation"},
+    "worker.ping": {"queue": "default", "routing_key": "default"},
+}
 
 # ---------------------------------------------------------------------------
 # Autodiscover tasks
@@ -68,8 +105,8 @@ celery_app.conf.update(
 # Add new task modules here as phases are built.
 # ---------------------------------------------------------------------------
 celery_app.autodiscover_tasks([
-    "app.tasks.backtest_tasks",          # Phase 2
-    "app.tasks.ingestion_tasks",         # Phase 1
+    "app.tasks.backtest_tasks",             # Phase 2
+    "app.tasks.ingestion_tasks",            # Phase 1
     "app.services.reconciliation_service",  # Phase 3 — position reconciliation
 ])
 
@@ -80,14 +117,13 @@ celery_app.autodiscover_tasks([
 # Or combined (dev only):
 #   celery -A worker.worker worker --beat --loglevel=info
 # ---------------------------------------------------------------------------
-from celery.schedules import crontab  # noqa: E402
-
 celery_app.conf.beat_schedule = {
     # Reconcile DB positions vs broker every 5 minutes during market hours.
     # The task itself checks is_market_open() and exits immediately if closed.
     "reconcile-positions": {
         "task": "tasks.reconcile_positions",
         "schedule": crontab(minute="*/5"),
+        "options": {"queue": "reconciliation", "routing_key": "reconciliation"},
     },
 }
 
@@ -96,6 +132,8 @@ logger.info(
     extra={
         "broker": settings.CELERY_BROKER_URL,
         "backend": settings.CELERY_RESULT_BACKEND,
+        "default_queue": celery_app.conf.task_default_queue,
+        "queues": ["default", "backtest", "ingestion", "reconciliation"],
     },
 )
 
