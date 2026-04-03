@@ -24,7 +24,6 @@ from typing import Optional
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -42,7 +41,7 @@ _TOKEN_TTL_SECONDS: int = 86_400
 
 # Redis key patterns — must match auth.py in each broker package
 _ZERODHA_TOKEN_KEY = "zerodha:access_token:{user_id}"
-_NUVAMA_TOKEN_KEY  = "nuvama:access_token:{user_id}"
+_NUVAMA_TOKEN_KEY = "nuvama:access_token:{user_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +164,7 @@ async def zerodha_callback(
     from app.brokers.zerodha.auth import exchange_request_token
 
     try:
-        access_token = await asyncio.to_thread(
+        await asyncio.to_thread(
             exchange_request_token,
             current_user.id,
             request_token,
@@ -187,17 +186,6 @@ async def zerodha_callback(
                 "details": {},
             },
         )
-
-    # Persist token to Redis
-    redis = await _get_redis()
-    try:
-        await redis.set(
-            _ZERODHA_TOKEN_KEY.format(user_id=current_user.id),
-            access_token,
-            ex=_TOKEN_TTL_SECONDS,
-        )
-    finally:
-        await redis.aclose()
 
     logger.info(
         "zerodha_token_stored",
@@ -242,7 +230,7 @@ async def nuvama_login(
     from app.brokers.nuvama.auth import exchange_request_id
 
     try:
-        access_token = await asyncio.to_thread(
+        await asyncio.to_thread(
             exchange_request_id,
             current_user.id,
             payload.request_id,
@@ -264,17 +252,6 @@ async def nuvama_login(
                 "details": {},
             },
         )
-
-    # Persist token to Redis
-    redis = await _get_redis()
-    try:
-        await redis.set(
-            _NUVAMA_TOKEN_KEY.format(user_id=current_user.id),
-            access_token,
-            ex=_TOKEN_TTL_SECONDS,
-        )
-    finally:
-        await redis.aclose()
 
     logger.info(
         "nuvama_token_stored",

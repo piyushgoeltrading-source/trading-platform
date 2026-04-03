@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI):
         extra={
             "event": "app_startup",
             "timestamp_utc": now_utc().isoformat(),
+            "environment": settings.ENVIRONMENT,
         },
     )
 
@@ -124,7 +125,7 @@ def create_app() -> FastAPI:
     # Tighten allowed_origins in production to your actual frontend domain
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000"],  # Next.js dev server
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

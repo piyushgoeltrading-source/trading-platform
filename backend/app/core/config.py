@@ -21,6 +21,11 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # -------------------------------------------------------------------------
+    # Runtime environment
+    # -------------------------------------------------------------------------
+    ENVIRONMENT: str = "development"
+
+    # -------------------------------------------------------------------------
     # Database
     # -------------------------------------------------------------------------
     DATABASE_URL: str = "postgresql+psycopg2://piyu:%40password@localhost:5432/piyushtrade"
@@ -43,6 +48,13 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION_USE_32_BYTES_MIN"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
+    # -------------------------------------------------------------------------
+    # CORS
+    # Comma-separated in .env, e.g.
+    # CORS_ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+    # -------------------------------------------------------------------------
+    CORS_ALLOW_ORIGINS: str = "http://localhost:3000"
 
     # -------------------------------------------------------------------------
     # Celery
@@ -95,6 +107,20 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     LOG_LEVEL: str = "INFO"
 
+    @property
+    def cors_origins(self) -> list[str]:
+        """
+        Return CORS origins as a clean list.
+
+        Supports a comma-separated env var:
+            CORS_ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+        """
+        return [
+            origin.strip()
+            for origin in self.CORS_ALLOW_ORIGINS.split(",")
+            if origin.strip()
+        ]
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -122,4 +148,20 @@ def _validate_redis_config() -> None:
         )
 
 
+def _validate_security_config() -> None:
+    """
+    Validate security-sensitive configuration.
+
+    In production, SECRET_KEY must never remain at the default placeholder value.
+    """
+    if settings.ENVIRONMENT.lower() == "production" and (
+        settings.SECRET_KEY == "CHANGE_ME_IN_PRODUCTION_USE_32_BYTES_MIN"
+    ):
+        raise RuntimeError(
+            "CONFIGURATION ERROR: SECRET_KEY is still using the default placeholder "
+            "value in production. Set a strong SECRET_KEY in your environment."
+        )
+
+
 _validate_redis_config()
+_validate_security_config()
