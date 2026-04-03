@@ -93,6 +93,8 @@ class OrderRequest:
         limit_price         Required for LIMIT and STOP_LIMIT orders
         trigger_price       Required for STOP_LIMIT and STOP_MARKET orders
         disclosed_quantity  Disclosed qty for iceberg orders (default 0)
+        strike              Option strike price for persistence / reconciliation
+        expiry              Option expiry date for persistence / reconciliation
         tag                 Optional label for identifying the order (strategy name etc.)
         idempotency_key     Floored-to-minute timestamp string — prevents duplicate orders on retry
     """
@@ -107,6 +109,8 @@ class OrderRequest:
     limit_price: float = 0.0
     trigger_price: float = 0.0
     disclosed_quantity: int = 0
+    strike: Optional[float] = None
+    expiry: Optional[date] = None
     tag: Optional[str] = None
     idempotency_key: Optional[str] = None
 

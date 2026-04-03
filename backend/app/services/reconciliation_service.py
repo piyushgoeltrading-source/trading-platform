@@ -52,20 +52,16 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brokers.base_broker import BrokerError, Position
 from app.brokers.factory import BrokerFactory, BrokerConfigError
-from app.core.config import settings
-from app.core.database import get_async_db
 from app.core.logging import get_structured_logger
 from app.core.time_utils import is_market_open, now_utc
-from app.models.order import Order, OrderStatus
-from app.models.trade import Trade
 from app.models.user import User
 from worker.worker import celery_app
 
@@ -82,9 +78,9 @@ class PositionDiscrepancy:
     trading_symbol: str
     exchange: str
     product_code: str
-    db_qty: int                        # Net qty from trades table (0 if missing)
-    broker_qty: int                    # Qty from broker (0 if missing)
-    discrepancy_type: str              # "missing_in_db" | "missing_in_broker" | "qty_mismatch"
+    db_qty: int
+    broker_qty: int
+    discrepancy_type: str
 
 
 @dataclass
@@ -96,21 +92,19 @@ class ReconciliationResult:
     run_at_utc: datetime = field(default_factory=now_utc)
     matched: int = 0
     discrepancies: int = 0
-    missing_in_db: list[dict] = field(default_factory=list)       # broker has, DB doesn't
-    missing_in_broker: list[dict] = field(default_factory=list)   # DB has, broker doesn't
-    qty_mismatch: list[dict] = field(default_factory=list)        # both have, qty differs
+    missing_in_db: list[dict] = field(default_factory=list)
+    missing_in_broker: list[dict] = field(default_factory=list)
+    qty_mismatch: list[dict] = field(default_factory=list)
     notes: str = ""
-    # Added fields (not in stub):
     user_id: Optional[int] = None
     broker_name: Optional[str] = None
-    broker_fetch_failed: bool = False  # True if broker call errored — partial run
+    broker_fetch_failed: bool = False
 
 
 # ---------------------------------------------------------------------------
 # Position key type
 # ---------------------------------------------------------------------------
 
-# Comparison key: (trading_symbol, exchange, product_code) all uppercase
 _PosKey = tuple[str, str, str]
 
 
@@ -141,8 +135,8 @@ class ReconciliationService:
 
     def __init__(
         self,
-        db_session: object = None,      # Accepted for stub compat — not used; each run() gets its own session
-        broker_adapter: object = None,  # Accepted for stub compat — not used; broker resolved per user
+        db_session: object = None,
+        broker_adapter: object = None,
     ) -> None:
         # Stub-compatible constructor — injected values are intentionally
         # ignored in production. BrokerFactory.get(user) resolves per run.
@@ -175,58 +169,70 @@ class ReconciliationService:
 
         logger.info(
             "reconciliation_run_start",
-            user_id=user.id,
-            broker=result.broker_name,
-            timestamp_utc=result.run_at_utc.isoformat(),
+            extra={
+                "event": "reconciliation_run_start",
+                "user_id": user.id,
+                "broker": result.broker_name,
+                "timestamp_utc": result.run_at_utc.isoformat(),
+            },
         )
 
-        # Step 1: DB positions (source of truth)
         db_positions = await self._fetch_db_positions(user_id=user.id, db=db)
 
-        # Step 2: Broker positions (comparison target)
         broker_positions: dict[_PosKey, int] = {}
         try:
             broker_positions = await self._fetch_broker_positions(user=user)
         except (BrokerError, BrokerConfigError, Exception) as exc:
-            # Broker unreachable — partial run. Log and continue so we
-            # at least persist the attempt. Do not raise.
             result.broker_fetch_failed = True
             result.notes = f"Broker fetch failed: {exc}"
+
             logger.error(
                 "reconciliation_broker_fetch_failed",
-                user_id=user.id,
-                error=str(exc),
+                extra={
+                    "event": "reconciliation_broker_fetch_failed",
+                    "user_id": user.id,
+                    "broker": result.broker_name,
+                    "error": str(exc),
+                    "timestamp_utc": now_utc().isoformat(),
+                },
             )
+
             await self._persist(result=result, db=db)
             return result
 
-        # Step 3: Compare
         result = self._compare(
             db_positions=db_positions,
             broker_positions=broker_positions,
             base_result=result,
         )
 
-        # Step 4: Log outcome
         if result.discrepancies > 0:
             logger.error(
                 "reconciliation_discrepancies_found",
-                user_id=user.id,
-                discrepancies=result.discrepancies,
-                missing_in_db=len(result.missing_in_db),
-                missing_in_broker=len(result.missing_in_broker),
-                qty_mismatch=len(result.qty_mismatch),
+                extra={
+                    "event": "reconciliation_discrepancies_found",
+                    "user_id": user.id,
+                    "broker": result.broker_name,
+                    "discrepancies": result.discrepancies,
+                    "missing_in_db": len(result.missing_in_db),
+                    "missing_in_broker": len(result.missing_in_broker),
+                    "qty_mismatch": len(result.qty_mismatch),
+                    "timestamp_utc": now_utc().isoformat(),
+                },
             )
         else:
             logger.info(
                 "reconciliation_clean",
-                user_id=user.id,
-                matched=result.matched,
+                extra={
+                    "event": "reconciliation_clean",
+                    "user_id": user.id,
+                    "broker": result.broker_name,
+                    "matched": result.matched,
+                    "timestamp_utc": now_utc().isoformat(),
+                },
             )
 
-        # Step 5: Persist result to DB (always — clean runs too)
         await self._persist(result=result, db=db)
-
         return result
 
     async def run_all_users(self, db: AsyncSession) -> list[ReconciliationResult]:
@@ -241,17 +247,41 @@ class ReconciliationService:
         )
         users: list[User] = list(result.scalars().all())
 
-        results = []
+        logger.info(
+            "reconciliation_run_all_users_start",
+            extra={
+                "event": "reconciliation_run_all_users_start",
+                "user_count": len(users),
+                "timestamp_utc": now_utc().isoformat(),
+            },
+        )
+
+        results: list[ReconciliationResult] = []
         for user in users:
             try:
-                r = await self.run(user=user, db=db)
-                results.append(r)
+                run_result = await self.run(user=user, db=db)
+                results.append(run_result)
             except Exception as exc:
                 logger.error(
                     "reconciliation_user_run_failed",
-                    user_id=user.id,
-                    error=str(exc),
+                    extra={
+                        "event": "reconciliation_user_run_failed",
+                        "user_id": user.id,
+                        "error": str(exc),
+                        "timestamp_utc": now_utc().isoformat(),
+                    },
                 )
+
+        logger.info(
+            "reconciliation_run_all_users_complete",
+            extra={
+                "event": "reconciliation_run_all_users_complete",
+                "user_count": len(users),
+                "result_count": len(results),
+                "timestamp_utc": now_utc().isoformat(),
+            },
+        )
+
         return results
 
     # ------------------------------------------------------------------
@@ -274,17 +304,18 @@ class ReconciliationService:
         Returns:
             Dict mapping (trading_symbol, exchange, product_code) → net_qty.
             Only non-zero positions are included.
+
+        V1 note:
+            The orders/trades schema does not yet persist exchange and
+            product_code on the DB side, so reconciliation uses a V1-safe
+            fallback key of (instrument, "NSE", "NRML") for DB positions.
+            Broker positions still use their real exchange/product_code.
+            When Order is extended with exchange/product_code columns, this
+            method should be upgraded to use them directly.
         """
-        # Compute net signed quantity per instrument across ALL sides.
-        # BUY fills are positive, SELL fills are negative.
-        # Grouping by instrument only (not side) gives the true net position:
-        #   10 BUY + 10 SELL -> net_qty = 0  -> excluded by HAVING (position closed)
-        #   10 BUY +  5 SELL -> net_qty = 5  -> included (still open long)
-        # Grouping by (instrument, side) was wrong — it split closed positions
-        # into two rows with the same dict key, causing the second to overwrite
-        # the first and producing false discrepancies on every reconciliation run.
         rows = await db.execute(
-            text("""
+            text(
+                """
                 SELECT
                     o.instrument,
                     SUM(
@@ -303,20 +334,24 @@ class ReconciliationService:
                         ELSE -t.fill_qty
                     END
                 ) != 0
-            """),
+                """
+            ),
             {"user_id": user_id},
         )
 
         db_positions: dict[_PosKey, int] = {}
         for row in rows:
-            # Trade model has no exchange/product_code — use instrument as key
-            key = _pos_key(row.instrument, "NSE", "NRML")  # V1: NSE options only
+            key = _pos_key(row.instrument, "NSE", "NRML")
             db_positions[key] = int(row.net_qty)
 
         logger.info(
             "reconciliation_db_positions_fetched",
-            user_id=user_id,
-            count=len(db_positions),
+            extra={
+                "event": "reconciliation_db_positions_fetched",
+                "user_id": user_id,
+                "count": len(db_positions),
+                "timestamp_utc": now_utc().isoformat(),
+            },
         )
         return db_positions
 
@@ -334,8 +369,7 @@ class ReconciliationService:
         BaseBroker.get_positions() is synchronous — dispatched to a thread pool
         via asyncio.to_thread() to avoid blocking the event loop.
 
-        Excludes broker positions with net quantity == 0 (broker sometimes
-        returns closed positions in the same response).
+        Excludes broker positions with net quantity == 0.
 
         Returns:
             Dict mapping (trading_symbol, exchange, product_code) → net_qty.
@@ -350,14 +384,18 @@ class ReconciliationService:
         broker_positions: dict[_PosKey, int] = {}
         for pos in positions:
             if pos.quantity == 0:
-                continue  # Closed position — exclude
+                continue
             key = _pos_key(pos.trading_symbol, pos.exchange, pos.product_code)
             broker_positions[key] = pos.quantity
 
         logger.info(
             "reconciliation_broker_positions_fetched",
-            user_id=user.id,
-            count=len(broker_positions),
+            extra={
+                "event": "reconciliation_broker_positions_fetched",
+                "user_id": user.id,
+                "count": len(broker_positions),
+                "timestamp_utc": now_utc().isoformat(),
+            },
         )
         return broker_positions
 
@@ -375,9 +413,9 @@ class ReconciliationService:
         Diff DB positions against broker positions.
 
         Three discrepancy types:
-          missing_in_db     — key in broker, not in DB
-          missing_in_broker — key in DB, not in broker
-          qty_mismatch      — key in both, quantities differ
+          missing_in_db
+          missing_in_broker
+          qty_mismatch
 
         Args:
             db_positions:     Output of _fetch_db_positions().
@@ -407,17 +445,14 @@ class ReconciliationService:
                 discrepancy.discrepancy_type = "missing_in_db"
                 base_result.missing_in_db.append(asdict(discrepancy))
                 base_result.discrepancies += 1
-
             elif key not in broker_positions:
                 discrepancy.discrepancy_type = "missing_in_broker"
                 base_result.missing_in_broker.append(asdict(discrepancy))
                 base_result.discrepancies += 1
-
             elif db_qty != broker_qty:
                 discrepancy.discrepancy_type = "qty_mismatch"
                 base_result.qty_mismatch.append(asdict(discrepancy))
                 base_result.discrepancies += 1
-
             else:
                 base_result.matched += 1
 
@@ -436,14 +471,15 @@ class ReconciliationService:
         Persist ReconciliationResult to the reconciliation_logs table.
 
         Discrepancy detail stored as JSONB. Never mutated after insert.
-        Requires migration 0006 — see note at bottom of this file.
+        Requires migration 0006.
 
         Never raises — persistence failure is logged but does not abort
-        the reconciliation run (result is still returned to caller).
+        the reconciliation run.
         """
         try:
             await db.execute(
-                text("""
+                text(
+                    """
                     INSERT INTO reconciliation_logs (
                         user_id,
                         broker_name,
@@ -467,7 +503,8 @@ class ReconciliationService:
                         :broker_fetch_failed,
                         :notes
                     )
-                """),
+                    """
+                ),
                 {
                     "user_id": result.user_id,
                     "broker_name": result.broker_name,
@@ -485,16 +522,24 @@ class ReconciliationService:
 
             logger.info(
                 "reconciliation_result_persisted",
-                user_id=result.user_id,
-                matched=result.matched,
-                discrepancies=result.discrepancies,
+                extra={
+                    "event": "reconciliation_result_persisted",
+                    "user_id": result.user_id,
+                    "matched": result.matched,
+                    "discrepancies": result.discrepancies,
+                    "timestamp_utc": now_utc().isoformat(),
+                },
             )
         except Exception as exc:
             await db.rollback()
             logger.error(
                 "reconciliation_persist_failed",
-                user_id=result.user_id,
-                error=str(exc),
+                extra={
+                    "event": "reconciliation_persist_failed",
+                    "user_id": result.user_id,
+                    "error": str(exc),
+                    "timestamp_utc": now_utc().isoformat(),
+                },
             )
 
 
@@ -513,23 +558,23 @@ def reconcile_positions_task(self) -> None:
     Scheduled every 5 minutes. Skips immediately if market is not open.
     max_retries=0 — reconciliation is time-sensitive; a stale retry would
     compare against already-stale data. Better to wait for the next beat.
-
-    Wiring (add to celery beat schedule in config.py):
-        "reconcile-positions": {
-            "task": "tasks.reconcile_positions",
-            "schedule": crontab(minute="*/5"),
-        }
     """
-    if not is_market_open():
-        logger.info("reconciliation_skipped_market_closed")
-        return
-
-    # Celery tasks are sync — run async service in a new event loop
-    import asyncio
-    from app.core.database import AsyncSessionLocal
 
     async def _run() -> None:
-        async with AsyncSessionLocal() as db:
+        if not is_market_open():
+            logger.info(
+                "reconciliation_skipped_market_closed",
+                extra={
+                    "event": "reconciliation_skipped_market_closed",
+                    "timestamp_utc": now_utc().isoformat(),
+                },
+            )
+            return
+
+        from app.core.database import get_async_db
+
+        async for db in get_async_db():
             await _service.run_all_users(db=db)
+            break
 
     asyncio.run(_run())

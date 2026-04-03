@@ -7,9 +7,9 @@ Order flow (LOCKED — do not reorder):
     → load Strategy from DB
     → risk_manager.check()        (module-level fn, takes Strategy ORM object)
     → execution_guard.check()     (returns GuardDecision — checked here)
-    → BrokerFactory.get(user)
+    → BrokerFactory.get(user, mode=...)
     → asyncio.to_thread(broker.place_order)   (broker methods are sync)
-    → DB write (Order row, status=SENT, idempotency_key persisted)
+    → DB write (Order row, status persisted, idempotency_key persisted)
     → return OrderResult
 
 Rules enforced here:
@@ -21,6 +21,8 @@ Rules enforced here:
   - Broker calls wrapped in asyncio.to_thread() — BaseBroker methods are sync
   - DB fail after broker success → log CRITICAL, return result, let
     reconciliation catch the discrepancy (do NOT attempt broker cancel)
+  - mode="paper" uses the same high-level execution flow but resolves
+    PaperBroker via BrokerFactory instead of a live broker
 """
 
 from __future__ import annotations
@@ -34,7 +36,6 @@ import redis.asyncio as aioredis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.brokers import base_broker as bb
 from app.brokers.base_broker import (
     BrokerError,
     OrderRequest,
@@ -45,7 +46,7 @@ from app.brokers.factory import BrokerFactory, BrokerConfigError
 from app.core.config import settings
 from app.core.logging import get_structured_logger
 from app.engines import risk_manager
-from app.engines.execution_guard import ExecutionGuard, CircuitState
+from app.engines.execution_guard import CircuitState, ExecutionGuard
 from app.engines.risk_manager import RiskCheckError
 from app.models.order import Order, OrderStatus as OrderStatusEnum
 from app.models.strategy import Strategy
@@ -93,6 +94,7 @@ def _build_idempotency_key(
     user_id: int,
     strategy_id: int,
     order_request: OrderRequest,
+    mode: str,
 ) -> str:
     """
     Build a deterministic, collision-resistant idempotency key.
@@ -102,7 +104,7 @@ def _build_idempotency_key(
     a new key on every retry — defeating the purpose entirely.
 
     Key ingredients:
-        user_id | strategy_id | trading_symbol | exchange | side |
+        user_id | strategy_id | mode | trading_symbol | exchange | side |
         order_type | product_code | quantity | minute-floored UTC timestamp
     """
     now_utc = datetime.now(timezone.utc)
@@ -111,6 +113,7 @@ def _build_idempotency_key(
     raw = (
         f"{user_id}:"
         f"{strategy_id}:"
+        f"{mode}:"
         f"{order_request.trading_symbol}:"
         f"{order_request.exchange.value}:"
         f"{order_request.side.value}:"
@@ -184,12 +187,38 @@ async def _load_strategy(
 
 
 # ---------------------------------------------------------------------------
+# Status mapping
+# ---------------------------------------------------------------------------
+
+def _map_broker_status_to_order_status(status: OrderStatus) -> OrderStatusEnum:
+    """
+    Map broker-agnostic broker/base_broker.OrderStatus to ORM OrderStatusEnum.
+
+    Current mapping:
+      COMPLETE   -> FILLED
+      CANCELLED  -> CANCELLED
+      REJECTED   -> REJECTED
+      everything else -> SENT
+
+    This keeps DB persistence stable even if broker-side lifecycle states
+    are finer-grained than the Order ORM model.
+    """
+    if status == OrderStatus.COMPLETE:
+        return OrderStatusEnum.FILLED
+    if status == OrderStatus.CANCELLED:
+        return OrderStatusEnum.CANCELLED
+    if status == OrderStatus.REJECTED:
+        return OrderStatusEnum.REJECTED
+    return OrderStatusEnum.SENT
+
+
+# ---------------------------------------------------------------------------
 # Execution Engine
 # ---------------------------------------------------------------------------
 
 class ExecutionEngine:
     """
-    Orchestrates the full live order placement pipeline.
+    Orchestrates the full live/paper order placement pipeline.
 
     This class contains ZERO backtest logic and must never import from
     app.engines.backtest_engine.
@@ -200,6 +229,7 @@ class ExecutionEngine:
     Usage:
         engine = ExecutionEngine()
         result = await engine.execute(order_request, user, strategy_id, db)
+        result = await engine.execute(order_request, user, strategy_id, db, mode="paper")
     """
 
     def __init__(self) -> None:
@@ -211,9 +241,10 @@ class ExecutionEngine:
         user: User,
         strategy_id: int,
         db: AsyncSession,
+        mode: str = "live",
     ) -> OrderResult:
         """
-        Place a live order through the full execution pipeline.
+        Place an order through the full execution pipeline.
 
         Parameters
         ----------
@@ -227,6 +258,9 @@ class ExecutionEngine:
             FK to the Strategy that triggered this order.
         db:
             AsyncSession — caller supplies via get_async_db() dependency.
+        mode:
+            "live" or "paper". "paper" resolves PaperBroker through BrokerFactory
+            but preserves the same high-level execution flow.
 
         Returns
         -------
@@ -241,16 +275,22 @@ class ExecutionEngine:
         BrokerConfigError    — unknown broker on user record.
         BrokerError          — broker SDK raised an error during placement.
         """
-        _log_ctx = {
+        if mode not in {"live", "paper"}:
+            raise ExecutionError(f"Unsupported execution mode '{mode}'. Expected 'live' or 'paper'.")
+
+        log_ctx = {
             "event": "execution_engine_start",
             "user_id": user.id,
             "strategy_id": strategy_id,
+            "mode": mode,
             "symbol": order_request.trading_symbol,
             "exchange": order_request.exchange.value,
             "side": order_request.side.value,
             "quantity": order_request.quantity,
+            "product_code": order_request.product_code.value,
+            "order_type": order_request.order_type.value,
         }
-        logger.info("execution_engine_start", extra=_log_ctx)
+        logger.info("execution_engine_start", extra=log_ctx)
 
         # ------------------------------------------------------------------
         # Step 0: Load Strategy ORM object
@@ -264,7 +304,12 @@ class ExecutionEngine:
         #   Key is built before broker call so it can gate at Redis
         #   and also be persisted on the Order row for audit.
         # ------------------------------------------------------------------
-        idempotency_key = _build_idempotency_key(user.id, strategy_id, order_request)
+        idempotency_key = _build_idempotency_key(
+            user.id,
+            strategy_id,
+            order_request,
+            mode=mode,
+        )
         order_request.idempotency_key = idempotency_key
 
         # ------------------------------------------------------------------
@@ -283,6 +328,7 @@ class ExecutionEngine:
                     "event": "idempotency_duplicate_rejected",
                     "user_id": user.id,
                     "strategy_id": strategy_id,
+                    "mode": mode,
                     "idempotency_key": idempotency_key,
                 },
             )
@@ -298,6 +344,7 @@ class ExecutionEngine:
                 "event": "idempotency_key_claimed",
                 "user_id": user.id,
                 "strategy_id": strategy_id,
+                "mode": mode,
                 "idempotency_key": idempotency_key,
             },
         )
@@ -314,15 +361,26 @@ class ExecutionEngine:
                 user=user,
                 strategy=strategy,
                 order_request=order_request,
+                mode=mode,
             )
             logger.info(
                 "risk_check_passed",
-                extra={"event": "risk_check_passed", "user_id": user.id, "strategy_id": strategy_id},
+                extra={
+                    "event": "risk_check_passed",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "mode": mode,
+                },
             )
         except RiskCheckError:
             logger.warning(
                 "risk_check_failed",
-                extra={"event": "risk_check_failed", "user_id": user.id, "strategy_id": strategy_id},
+                extra={
+                    "event": "risk_check_failed",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "mode": mode,
+                },
             )
             raise
 
@@ -341,6 +399,7 @@ class ExecutionEngine:
                 "side": order_request.side.value,
                 "quantity": order_request.quantity,
                 "idempotency_key": idempotency_key,
+                "mode": mode,
             },
         )
 
@@ -351,6 +410,7 @@ class ExecutionEngine:
                     "event": "execution_guard_rejected",
                     "user_id": user.id,
                     "strategy_id": strategy_id,
+                    "mode": mode,
                     "reason": guard_decision.reason,
                     "circuit_state": guard_decision.circuit_state.value,
                 },
@@ -366,6 +426,7 @@ class ExecutionEngine:
                 "event": "execution_guard_passed",
                 "user_id": user.id,
                 "strategy_id": strategy_id,
+                "mode": mode,
                 "circuit_state": guard_decision.circuit_state.value,
             },
         )
@@ -374,11 +435,17 @@ class ExecutionEngine:
         # Step 5: Resolve broker
         # ------------------------------------------------------------------
         try:
-            broker = BrokerFactory.get(user)
+            broker = BrokerFactory.get(user, mode=mode)
         except BrokerConfigError:
             logger.error(
                 "broker_resolution_failed",
-                extra={"event": "broker_resolution_failed", "user_id": user.id, "broker": str(user.broker)},
+                extra={
+                    "event": "broker_resolution_failed",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "mode": mode,
+                    "broker": str(user.broker),
+                },
             )
             raise
 
@@ -400,14 +467,21 @@ class ExecutionEngine:
                     "event": "broker_order_placed",
                     "user_id": user.id,
                     "strategy_id": strategy_id,
+                    "mode": mode,
                     "broker_order_id": order_result.broker_order_id,
-                    "status": order_result.status.value,
+                    "broker_status": order_result.status.value,
                 },
             )
         except BrokerError as exc:
             logger.error(
                 "broker_place_order_failed",
-                extra={"event": "broker_place_order_failed", "user_id": user.id, "strategy_id": strategy_id, "reason": str(exc)},
+                extra={
+                    "event": "broker_place_order_failed",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "mode": mode,
+                    "reason": str(exc),
+                },
             )
             await self._guard.record_failure(
                 user_id=user.id,
@@ -418,7 +492,13 @@ class ExecutionEngine:
         except Exception as exc:
             logger.error(
                 "broker_unexpected_error",
-                extra={"event": "broker_unexpected_error", "user_id": user.id, "strategy_id": strategy_id, "reason": str(exc)},
+                extra={
+                    "event": "broker_unexpected_error",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "mode": mode,
+                    "reason": str(exc),
+                },
             )
             await self._guard.record_failure(
                 user_id=user.id,
@@ -447,12 +527,14 @@ class ExecutionEngine:
         #   to cancel — that risks a double-action. Reconciliation will catch
         #   the discrepancy at the next 5-minute run.
         # ------------------------------------------------------------------
+        persisted_status = _map_broker_status_to_order_status(order_result.status)
+
         try:
             order_row = Order(
                 user_id=user.id,
                 strategy_id=strategy_id,
                 idempotency_key=idempotency_key,
-                status=OrderStatusEnum.SENT,
+                status=persisted_status,
                 instrument=order_request.trading_symbol,
                 side=order_request.side,
                 qty=order_request.quantity,
@@ -460,6 +542,7 @@ class ExecutionEngine:
                 expiry=order_request.expiry,
                 broker=user.broker,
                 broker_order_id=order_result.broker_order_id,
+                rejection_reason=order_result.message if order_result.status == OrderStatus.REJECTED else None,
             )
             db.add(order_row)
             await db.commit()
@@ -471,6 +554,7 @@ class ExecutionEngine:
                     "event": "order_persisted",
                     "user_id": user.id,
                     "strategy_id": strategy_id,
+                    "mode": mode,
                     "order_id": order_row.id,
                     "broker_order_id": order_row.broker_order_id,
                     "status": str(order_row.status),
@@ -485,6 +569,7 @@ class ExecutionEngine:
                     "event": "order_db_persist_failed_after_broker_success",
                     "user_id": user.id,
                     "strategy_id": strategy_id,
+                    "mode": mode,
                     "broker_order_id": order_result.broker_order_id,
                     "symbol": order_request.trading_symbol,
                     "reason": str(exc),

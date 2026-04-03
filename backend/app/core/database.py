@@ -30,6 +30,35 @@ class Base(DeclarativeBase):
 
 
 # ---------------------------------------------------------------------------
+# Async engine — used by strategy.py, backtest_tasks.py, all Phase 3 endpoints
+# Requires asyncpg: pip install asyncpg
+# DATABASE_URL should use postgresql+psycopg2:// (or plain postgresql://).
+# The async URL is derived here — no second env var needed.
+#
+# Handles all three input forms defensively:
+#   postgresql+psycopg2://  →  async: postgresql+asyncpg://
+#   postgresql://            →  async: postgresql+asyncpg://
+#   postgresql+asyncpg://   →  async: unchanged (already correct)
+# ---------------------------------------------------------------------------
+
+_base_url = settings.DATABASE_URL
+
+# Derive sync URL — normalise to psycopg2 regardless of input form
+_sync_url = (
+    _base_url
+    .replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    .replace("postgresql://", "postgresql+psycopg2://")
+)
+
+# Derive async URL — strip psycopg2 if present, ensure asyncpg
+_async_url = (
+    _base_url
+    .replace("postgresql+psycopg2://", "postgresql+asyncpg://")
+    .replace("postgresql://", "postgresql+asyncpg://")
+)
+
+
+# ---------------------------------------------------------------------------
 # Sync engine — used by auth.py, security.py, Alembic env.py
 # ---------------------------------------------------------------------------
 
@@ -64,34 +93,6 @@ def get_db():
     finally:
         db.close()
 
-
-# ---------------------------------------------------------------------------
-# Async engine — used by strategy.py, backtest_tasks.py, all Phase 3 endpoints
-# Requires asyncpg: pip install asyncpg
-# DATABASE_URL should use postgresql+psycopg2:// (or plain postgresql://).
-# The async URL is derived here — no second env var needed.
-#
-# Handles all three input forms defensively:
-#   postgresql+psycopg2://  →  async: postgresql+asyncpg://
-#   postgresql://            →  async: postgresql+asyncpg://
-#   postgresql+asyncpg://   →  async: unchanged (already correct)
-# ---------------------------------------------------------------------------
-
-_base_url = settings.DATABASE_URL
-
-# Derive sync URL — normalise to psycopg2 regardless of input form
-_sync_url = (
-    _base_url
-    .replace("postgresql+asyncpg://", "postgresql+psycopg2://")
-    .replace("postgresql://", "postgresql+psycopg2://")
-)
-
-# Derive async URL — strip psycopg2 if present, ensure asyncpg
-_async_url = (
-    _base_url
-    .replace("postgresql+psycopg2://", "postgresql+asyncpg://")
-    .replace("postgresql://", "postgresql+asyncpg://")
-)
 
 async_engine = create_async_engine(
     _async_url,

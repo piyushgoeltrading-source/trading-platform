@@ -7,7 +7,8 @@ Central API router — PiyushTrade
 Mounts all endpoint routers. Each router owns its own prefix internally.
 No prefix is added here — doing so would create double-prefixes.
 
-Phase 3 complete: orders, trades, portfolio, broker routers added.
+Phase 3 currently mounted: portfolio, broker.
+orders and trades routers should be added here only when their endpoint files exist.
 """
 
 from fastapi import APIRouter
@@ -17,10 +18,8 @@ from app.api.v1.endpoints import (
     backtest,
     broker,
     options,
-    orders,
     portfolio,
     strategy,
-    trades,
     users,
 )
 
@@ -34,7 +33,5 @@ api_router.include_router(strategy.router, tags=["strategies"])
 api_router.include_router(backtest.router, tags=["backtest"])
 
 # Phase 3 routers — each router owns its own prefix
-api_router.include_router(orders.router,    tags=["orders"])
-api_router.include_router(trades.router,    tags=["trades"])
 api_router.include_router(portfolio.router, tags=["portfolio"])
 api_router.include_router(broker.router,    tags=["broker"])

@@ -21,6 +21,11 @@ Usage:
 
     broker = BrokerFactory.get(current_user)
     result = broker.place_order(order_request)
+
+Paper trading:
+  - Pass mode="paper" to return PaperBroker instead of a live broker.
+  - PaperBroker preserves the same BaseBroker contract and is used only for
+    safe simulated execution — no real broker API calls.
 """
 
 from __future__ import annotations
@@ -50,33 +55,65 @@ class BrokerFactory:
     """
 
     @staticmethod
-    def get(user: User):
+    def get(user: User, mode: str = "live"):
         """
         Return the broker implementation for the given user.
 
         Args:
             user: Authenticated User ORM instance. Must have a non-None
                   ``broker`` field (BrokerName enum value).
+            mode: "live" or "paper".
+                  - "live"  -> resolve the user's configured broker
+                  - "paper" -> return PaperBroker (no real broker API calls)
 
         Returns:
-            An instance of a BaseBroker subclass (ZerodhaBroker or
-            NuvamaBroker) initialised for this user.
+            An instance of a BaseBroker subclass.
 
         Raises:
-            BrokerConfigError: user.broker is None or not a supported value.
-            ImportError:        Broker SDK not installed (e.g. kiteconnect,
-                                APIConnect).
+            BrokerConfigError: user.broker is None, mode is invalid, or broker
+                               is not a supported value.
+            ImportError:       Broker SDK not installed (e.g. kiteconnect,
+                               APIConnect).
         """
+        if mode not in {"live", "paper"}:
+            logger.error(
+                "broker_factory_invalid_mode",
+                extra={
+                    "user_id": user.id,
+                    "mode": mode,
+                },
+            )
+            raise BrokerConfigError(
+                f"Unsupported broker mode '{mode}'. Expected 'live' or 'paper'."
+            )
+
+        if mode == "paper":
+            from app.brokers.paper.client import PaperBroker  # noqa: PLC0415
+
+            logger.info(
+                "broker_factory_resolved",
+                extra={
+                    "user_id": user.id,
+                    "mode": "paper",
+                    "broker": "paper",
+                },
+            )
+            return PaperBroker(user_id=user.id)
+
         broker_name: BrokerName | None = user.broker
 
         if broker_name is None:
             logger.error(
                 "broker_factory_no_broker_set",
-                extra={"user_id": user.id, "email": user.email},
+                extra={
+                    "user_id": user.id,
+                    "email": user.email,
+                    "mode": mode,
+                },
             )
             raise BrokerConfigError(
                 f"User {user.id} has no broker configured. "
-                "Set user.broker before placing orders."
+                "Set user.broker before placing live orders."
             )
 
         if broker_name == BrokerName.zerodha:
@@ -85,7 +122,11 @@ class BrokerFactory:
 
             logger.info(
                 "broker_factory_resolved",
-                extra={"user_id": user.id, "broker": BrokerName.zerodha.value},
+                extra={
+                    "user_id": user.id,
+                    "mode": "live",
+                    "broker": BrokerName.zerodha.value,
+                },
             )
             return ZerodhaBroker(user_id=user.id)
 
@@ -95,7 +136,11 @@ class BrokerFactory:
 
             logger.info(
                 "broker_factory_resolved",
-                extra={"user_id": user.id, "broker": BrokerName.nuvama.value},
+                extra={
+                    "user_id": user.id,
+                    "mode": "live",
+                    "broker": BrokerName.nuvama.value,
+                },
             )
             return NuvamaBroker(user_id=user.id)
 
@@ -103,7 +148,11 @@ class BrokerFactory:
         # blocks before this guard.
         logger.error(
             "broker_factory_unsupported_broker",
-            extra={"user_id": user.id, "broker": str(broker_name)},
+            extra={
+                "user_id": user.id,
+                "mode": mode,
+                "broker": str(broker_name),
+            },
         )
         raise BrokerConfigError(
             f"Broker '{broker_name}' is not yet implemented. "
