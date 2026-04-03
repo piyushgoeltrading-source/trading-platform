@@ -41,6 +41,12 @@ Rules:
   - All DB access via AsyncSession / get_async_db pattern.
   - Raises RiskCheckError (defined here) on any failed check.
     Execution engine catches this and returns HTTP 422 to the client.
+
+Paper trading notes:
+  - mode="paper" uses the same daily-loss and max-position checks, but scoped
+    to paper trades/orders only.
+  - mode="paper" skips live broker margin verification by design. Paper trading
+    is for safe simulation and should not depend on live broker funds/tokens.
 """
 
 from __future__ import annotations
@@ -48,10 +54,10 @@ from __future__ import annotations
 import asyncio
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from typing import Any
+from datetime import date
+from typing import Any, Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brokers.base_broker import OrderRequest
@@ -71,6 +77,8 @@ logger = get_structured_logger(__name__)
 _DEFAULT_MAX_DAILY_LOSS_INR: float = 5_000.0   # ₹5,000 daily loss ceiling
 _DEFAULT_MAX_POSITIONS: int = 5                 # Max open orders per strategy
 _DEFAULT_MARGIN_BUFFER_PCT: float = 20.0        # 20% free margin buffer
+
+_PAPER_ORDER_PREFIX = "PAPER-%"
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +122,35 @@ def _get_int(params: dict[str, Any], key: str, default: int) -> int:
         return default
 
 
+def _validate_mode(mode: str) -> Literal["live", "paper"]:
+    """
+    Validate and normalise execution mode.
+    """
+    normalised = mode.lower().strip()
+    if normalised not in {"live", "paper"}:
+        raise ValueError(f"Unsupported risk mode '{mode}'. Expected 'live' or 'paper'.")
+    return normalised  # type: ignore[return-value]
+
+
+def _mode_order_filter(mode: Literal["live", "paper"]):
+    """
+    SQLAlchemy filter expression to separate paper vs live orders/trades.
+
+    Paper mode:
+      Order.broker_order_id LIKE 'PAPER-%'
+
+    Live mode:
+      Order.broker_order_id IS NULL OR NOT LIKE 'PAPER-%'
+    """
+    if mode == "paper":
+        return Order.broker_order_id.like(_PAPER_ORDER_PREFIX)
+
+    return (
+        (Order.broker_order_id.is_(None))
+        | (~Order.broker_order_id.like(_PAPER_ORDER_PREFIX))
+    )
+
+
 # ---------------------------------------------------------------------------
 # Individual checks (async, read-only)
 # ---------------------------------------------------------------------------
@@ -122,12 +159,13 @@ async def _check_daily_loss_limit(
     db: AsyncSession,
     user: User,
     strategy: Strategy,
+    mode: Literal["live", "paper"],
 ) -> None:
     """
     Check 1: Daily loss limit.
 
-    Sums realised_pnl from all trades closed today for this user.
-    Also reads any open positions' unrealised PnL via the broker.
+    Sums realised_pnl from all trades closed today for this user and mode.
+    Also reads any open positions' unrealised PnL via the resolved broker.
     Blocks if the combined loss has breached max_daily_loss_inr.
 
     Uses DB trades table as the source of truth for realised PnL.
@@ -137,6 +175,7 @@ async def _check_daily_loss_limit(
         db:       Async DB session.
         user:     Authenticated user ORM instance.
         strategy: Strategy being traded — parameters used for threshold.
+        mode:     "live" or "paper". Scopes DB and broker reads accordingly.
 
     Raises:
         RiskCheckError: Daily loss limit breached.
@@ -145,8 +184,9 @@ async def _check_daily_loss_limit(
     max_loss = _get_float(params, "max_daily_loss_inr", _DEFAULT_MAX_DAILY_LOSS_INR)
 
     today = date.today()
+    mode_filter = _mode_order_filter(mode)
 
-    # Sum realised PnL from trades closed today (negative = loss)
+    # Sum realised PnL from trades closed today (negative = loss), scoped by mode
     result = await db.execute(
         select(func.coalesce(func.sum(Trade.realised_pnl), 0))
         .join(Order, Trade.order_id == Order.id)
@@ -154,22 +194,25 @@ async def _check_daily_loss_limit(
             Trade.user_id == user.id,
             Trade.closed_at.isnot(None),
             func.date(Trade.closed_at) == today,
+            mode_filter,
         )
     )
     realised_pnl: float = float(result.scalar() or 0.0)
 
-    # Unrealised PnL from broker positions (best-effort — don't block on failure)
+    # Unrealised PnL from resolved broker positions (best-effort — don't block on failure)
     unrealised_pnl: float = 0.0
     try:
-        broker = BrokerFactory.get(user)
+        broker = BrokerFactory.get(user, mode=mode)
         positions = await asyncio.to_thread(broker.get_positions)
-        unrealised_pnl = sum(p.pnl for p in positions)
+        unrealised_pnl = float(sum(float(p.pnl) for p in positions))
     except Exception as exc:
         logger.warning(
             "risk_daily_loss_broker_positions_failed",
             extra={
                 "event": "risk_daily_loss_broker_positions_failed",
                 "user_id": user.id,
+                "strategy_id": strategy.id,
+                "mode": mode,
                 "error": str(exc),
             },
         )
@@ -183,6 +226,7 @@ async def _check_daily_loss_limit(
             "event": "risk_daily_loss_check",
             "user_id": user.id,
             "strategy_id": strategy.id,
+            "mode": mode,
             "realised_pnl": realised_pnl,
             "unrealised_pnl": unrealised_pnl,
             "total_pnl": total_pnl,
@@ -201,6 +245,7 @@ async def _check_daily_loss_limit(
             context={
                 "user_id": user.id,
                 "strategy_id": strategy.id,
+                "mode": mode,
                 "realised_pnl": realised_pnl,
                 "unrealised_pnl": unrealised_pnl,
                 "total_pnl": total_pnl,
@@ -213,21 +258,23 @@ async def _check_max_positions(
     db: AsyncSession,
     user: User,
     strategy: Strategy,
+    mode: Literal["live", "paper"],
 ) -> None:
     """
     Check 2: Max open positions per strategy.
 
-    Counts orders in PENDING or SENT status placed today for this strategy.
-    Blocks if the count is >= max_positions.
+    Counts orders in PENDING or SENT status placed today for this strategy,
+    scoped by execution mode.
 
     "Open" here means orders that have been submitted to the broker but not
     yet filled, cancelled, or failed. FILLED orders are not counted because
-    they represent closed legs, not ongoing exposure.
+    they represent completed placement, not pending order exposure.
 
     Args:
         db:       Async DB session.
         user:     Authenticated user ORM instance.
         strategy: Strategy being traded.
+        mode:     "live" or "paper".
 
     Raises:
         RiskCheckError: Max open positions limit reached.
@@ -236,6 +283,7 @@ async def _check_max_positions(
     max_positions = _get_int(params, "max_positions", _DEFAULT_MAX_POSITIONS)
 
     today = date.today()
+    mode_filter = _mode_order_filter(mode)
 
     result = await db.execute(
         select(func.count(Order.id)).where(
@@ -243,9 +291,10 @@ async def _check_max_positions(
             Order.strategy_id == strategy.id,
             Order.status.in_([OrderStatus.PENDING, OrderStatus.SENT]),
             func.date(Order.created_at) == today,
+            mode_filter,
         )
     )
-    open_count: int = result.scalar() or 0
+    open_count: int = int(result.scalar() or 0)
 
     logger.info(
         "risk_max_positions_check",
@@ -253,6 +302,7 @@ async def _check_max_positions(
             "event": "risk_max_positions_check",
             "user_id": user.id,
             "strategy_id": strategy.id,
+            "mode": mode,
             "open_count": open_count,
             "max_positions": max_positions,
         },
@@ -269,6 +319,7 @@ async def _check_max_positions(
             context={
                 "user_id": user.id,
                 "strategy_id": strategy.id,
+                "mode": mode,
                 "open_count": open_count,
                 "max_positions": max_positions,
             },
@@ -279,12 +330,18 @@ async def _check_margin(
     user: User,
     strategy: Strategy,
     order_request: OrderRequest,
+    mode: Literal["live", "paper"],
 ) -> None:
     """
     Check 3: Margin availability.
 
-    Fetches live available cash from the broker and compares it against
-    an estimated order cost. Blocks if free margin is insufficient.
+    Live mode:
+      Fetches live available cash from the broker and compares it against
+      an estimated order cost. Blocks if free margin is insufficient.
+
+    Paper mode:
+      Skips live broker margin verification by design. Paper trading is a
+      safe simulation mode and should not require live tokens or broker funds.
 
     Estimated order cost = limit_price (or 0 for MARKET) × quantity.
     Required free margin = estimated_cost × (1 + margin_buffer_pct / 100).
@@ -296,12 +353,26 @@ async def _check_margin(
         user:          Authenticated user ORM instance.
         strategy:      Strategy being traded — parameters used for buffer %.
         order_request: The order about to be placed.
+        mode:          "live" or "paper".
 
     Raises:
-        RiskCheckError: Insufficient margin.
+        RiskCheckError: Insufficient margin in live mode.
     """
     params: dict[str, Any] = strategy.parameters or {}
     buffer_pct = _get_float(params, "margin_buffer_pct", _DEFAULT_MARGIN_BUFFER_PCT)
+
+    if mode == "paper":
+        logger.info(
+            "risk_margin_check_skipped",
+            extra={
+                "event": "risk_margin_check_skipped",
+                "user_id": user.id,
+                "strategy_id": strategy.id,
+                "mode": mode,
+                "reason": "paper_mode",
+            },
+        )
+        return
 
     # Estimated cost — use limit_price if set, otherwise skip for MARKET orders
     estimated_price = order_request.limit_price
@@ -312,6 +383,7 @@ async def _check_margin(
                 "event": "risk_margin_check_skipped",
                 "user_id": user.id,
                 "strategy_id": strategy.id,
+                "mode": mode,
                 "reason": "market_order_no_price",
             },
         )
@@ -322,9 +394,9 @@ async def _check_margin(
 
     # Fetch live margin from broker
     try:
-        broker = BrokerFactory.get(user)
+        broker = BrokerFactory.get(user, mode=mode)
         margin = await asyncio.to_thread(broker.get_margins)
-        available_cash = margin.available_cash
+        available_cash = float(margin.available_cash)
     except Exception as exc:
         # If margin fetch fails, block the order — safer than allowing blindly
         logger.error(
@@ -332,6 +404,8 @@ async def _check_margin(
             extra={
                 "event": "risk_margin_fetch_failed",
                 "user_id": user.id,
+                "strategy_id": strategy.id,
+                "mode": mode,
                 "error": str(exc),
             },
         )
@@ -341,7 +415,12 @@ async def _check_margin(
                 f"Could not verify margin availability: {exc}. "
                 "Order blocked until broker margin can be confirmed."
             ),
-            context={"user_id": user.id, "error": str(exc)},
+            context={
+                "user_id": user.id,
+                "strategy_id": strategy.id,
+                "mode": mode,
+                "error": str(exc),
+            },
         ) from exc
 
     logger.info(
@@ -350,6 +429,7 @@ async def _check_margin(
             "event": "risk_margin_check",
             "user_id": user.id,
             "strategy_id": strategy.id,
+            "mode": mode,
             "estimated_cost": estimated_cost,
             "required_margin": required_margin,
             "available_cash": available_cash,
@@ -369,6 +449,7 @@ async def _check_margin(
             context={
                 "user_id": user.id,
                 "strategy_id": strategy.id,
+                "mode": mode,
                 "estimated_cost": estimated_cost,
                 "required_margin": required_margin,
                 "available_cash": available_cash,
@@ -386,6 +467,7 @@ async def check(
     user: User,
     strategy: Strategy,
     order_request: OrderRequest,
+    mode: str = "live",
 ) -> None:
     """
     Run all pre-trade risk checks in sequence.
@@ -394,15 +476,16 @@ async def check(
     raises RiskCheckError immediately — subsequent checks are not run.
 
     Order of checks:
-      1. Daily loss limit   (DB query + broker positions)
+      1. Daily loss limit   (DB query + resolved broker positions)
       2. Max open positions (DB query only)
-      3. Margin             (broker live call)
+      3. Margin             (live broker call, skipped in paper mode)
 
     Args:
         db:            Async DB session (read-only in this function).
-        user:          Authenticated user ORM instance (must have .broker set).
+        user:          Authenticated user ORM instance (must have .broker set for live mode).
         strategy:      Strategy being traded (must have .parameters populated).
         order_request: The order about to be placed.
+        mode:          "live" or "paper".
 
     Returns:
         None — all checks passed.
@@ -411,21 +494,24 @@ async def check(
         RiskCheckError: One or more checks failed. Execution engine should
                         catch this and return HTTP 422 with the error message.
     """
+    resolved_mode = _validate_mode(mode)
+
     logger.info(
         "risk_check_start",
         extra={
             "event": "risk_check_start",
             "user_id": user.id,
             "strategy_id": strategy.id,
+            "mode": resolved_mode,
             "symbol": order_request.trading_symbol,
             "side": order_request.side.value,
             "qty": order_request.quantity,
         },
     )
 
-    await _check_daily_loss_limit(db, user, strategy)
-    await _check_max_positions(db, user, strategy)
-    await _check_margin(user, strategy, order_request)
+    await _check_daily_loss_limit(db, user, strategy, resolved_mode)
+    await _check_max_positions(db, user, strategy, resolved_mode)
+    await _check_margin(user, strategy, order_request, resolved_mode)
 
     logger.info(
         "risk_check_passed",
@@ -433,6 +519,7 @@ async def check(
             "event": "risk_check_passed",
             "user_id": user.id,
             "strategy_id": strategy.id,
+            "mode": resolved_mode,
             "symbol": order_request.trading_symbol,
         },
     )
