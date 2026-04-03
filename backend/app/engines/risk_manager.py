@@ -45,6 +45,8 @@ Rules:
 
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
@@ -160,7 +162,7 @@ async def _check_daily_loss_limit(
     unrealised_pnl: float = 0.0
     try:
         broker = BrokerFactory.get(user)
-        positions = broker.get_positions()
+        positions = await asyncio.to_thread(broker.get_positions)
         unrealised_pnl = sum(p.pnl for p in positions)
     except Exception as exc:
         logger.warning(
@@ -321,7 +323,7 @@ async def _check_margin(
     # Fetch live margin from broker
     try:
         broker = BrokerFactory.get(user)
-        margin = broker.get_margins()
+        margin = await asyncio.to_thread(broker.get_margins)
         available_cash = margin.available_cash
     except Exception as exc:
         # If margin fetch fails, block the order — safer than allowing blindly

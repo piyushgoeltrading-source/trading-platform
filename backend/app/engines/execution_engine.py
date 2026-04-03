@@ -241,15 +241,16 @@ class ExecutionEngine:
         BrokerConfigError    — unknown broker on user record.
         BrokerError          — broker SDK raised an error during placement.
         """
-        log = logger.bind(
-            user_id=user.id,
-            strategy_id=strategy_id,
-            symbol=order_request.trading_symbol,
-            exchange=order_request.exchange.value,
-            side=order_request.side.value,
-            quantity=order_request.quantity,
-        )
-        log.info("execution_engine_start")
+        _log_ctx = {
+            "event": "execution_engine_start",
+            "user_id": user.id,
+            "strategy_id": strategy_id,
+            "symbol": order_request.trading_symbol,
+            "exchange": order_request.exchange.value,
+            "side": order_request.side.value,
+            "quantity": order_request.quantity,
+        }
+        logger.info("execution_engine_start", extra=_log_ctx)
 
         # ------------------------------------------------------------------
         # Step 0: Load Strategy ORM object
@@ -276,9 +277,14 @@ class ExecutionEngine:
             idempotency_key=idempotency_key,
         )
         if not key_claimed:
-            log.warning(
+            logger.warning(
                 "idempotency_duplicate_rejected",
-                idempotency_key=idempotency_key,
+                extra={
+                    "event": "idempotency_duplicate_rejected",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "idempotency_key": idempotency_key,
+                },
             )
             raise DuplicateOrderError(
                 f"Duplicate order detected within idempotency window. "
@@ -286,7 +292,15 @@ class ExecutionEngine:
                 "If this was not a retry, wait 5 minutes and resubmit."
             )
 
-        log.info("idempotency_key_claimed", idempotency_key=idempotency_key)
+        logger.info(
+            "idempotency_key_claimed",
+            extra={
+                "event": "idempotency_key_claimed",
+                "user_id": user.id,
+                "strategy_id": strategy_id,
+                "idempotency_key": idempotency_key,
+            },
+        )
 
         # ------------------------------------------------------------------
         # Step 3: Risk manager — three sequential checks
@@ -301,9 +315,15 @@ class ExecutionEngine:
                 strategy=strategy,
                 order_request=order_request,
             )
-            log.info("risk_check_passed")
+            logger.info(
+                "risk_check_passed",
+                extra={"event": "risk_check_passed", "user_id": user.id, "strategy_id": strategy_id},
+            )
         except RiskCheckError:
-            log.warning("risk_check_failed", check=str(Exception))
+            logger.warning(
+                "risk_check_failed",
+                extra={"event": "risk_check_failed", "user_id": user.id, "strategy_id": strategy_id},
+            )
             raise
 
         # ------------------------------------------------------------------
@@ -325,19 +345,29 @@ class ExecutionEngine:
         )
 
         if not guard_decision.allowed:
-            log.warning(
+            logger.warning(
                 "execution_guard_rejected",
-                reason=guard_decision.reason,
-                circuit_state=guard_decision.circuit_state.value,
+                extra={
+                    "event": "execution_guard_rejected",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "reason": guard_decision.reason,
+                    "circuit_state": guard_decision.circuit_state.value,
+                },
             )
             raise GuardRejectedError(
                 reason=guard_decision.reason,
                 circuit_state=guard_decision.circuit_state,
             )
 
-        log.info(
+        logger.info(
             "execution_guard_passed",
-            circuit_state=guard_decision.circuit_state.value,
+            extra={
+                "event": "execution_guard_passed",
+                "user_id": user.id,
+                "strategy_id": strategy_id,
+                "circuit_state": guard_decision.circuit_state.value,
+            },
         )
 
         # ------------------------------------------------------------------
@@ -346,7 +376,10 @@ class ExecutionEngine:
         try:
             broker = BrokerFactory.get(user)
         except BrokerConfigError:
-            log.error("broker_resolution_failed", broker=str(user.broker))
+            logger.error(
+                "broker_resolution_failed",
+                extra={"event": "broker_resolution_failed", "user_id": user.id, "broker": str(user.broker)},
+            )
             raise
 
         # ------------------------------------------------------------------
@@ -361,13 +394,21 @@ class ExecutionEngine:
                 broker.place_order,
                 order_request,
             )
-            log.info(
+            logger.info(
                 "broker_order_placed",
-                broker_order_id=order_result.broker_order_id,
-                status=order_result.status.value,
+                extra={
+                    "event": "broker_order_placed",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "broker_order_id": order_result.broker_order_id,
+                    "status": order_result.status.value,
+                },
             )
         except BrokerError as exc:
-            log.error("broker_place_order_failed", reason=str(exc))
+            logger.error(
+                "broker_place_order_failed",
+                extra={"event": "broker_place_order_failed", "user_id": user.id, "strategy_id": strategy_id, "reason": str(exc)},
+            )
             await self._guard.record_failure(
                 user_id=user.id,
                 strategy_id=strategy_id,
@@ -375,7 +416,10 @@ class ExecutionEngine:
             )
             raise
         except Exception as exc:
-            log.error("broker_unexpected_error", reason=str(exc))
+            logger.error(
+                "broker_unexpected_error",
+                extra={"event": "broker_unexpected_error", "user_id": user.id, "strategy_id": strategy_id, "reason": str(exc)},
+            )
             await self._guard.record_failure(
                 user_id=user.id,
                 strategy_id=strategy_id,
@@ -421,22 +465,31 @@ class ExecutionEngine:
             await db.commit()
             await db.refresh(order_row)
 
-            log.info(
+            logger.info(
                 "order_persisted",
-                order_id=order_row.id,
-                broker_order_id=order_row.broker_order_id,
-                status=order_row.status,
+                extra={
+                    "event": "order_persisted",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "order_id": order_row.id,
+                    "broker_order_id": order_row.broker_order_id,
+                    "status": str(order_row.status),
+                },
             )
 
         except Exception as exc:
             await db.rollback()
-            log.critical(
+            logger.critical(
                 "order_db_persist_failed_after_broker_success",
-                broker_order_id=order_result.broker_order_id,
-                strategy_id=strategy_id,
-                symbol=order_request.trading_symbol,
-                reason=str(exc),
-                action="reconciliation_will_catch",
+                extra={
+                    "event": "order_db_persist_failed_after_broker_success",
+                    "user_id": user.id,
+                    "strategy_id": strategy_id,
+                    "broker_order_id": order_result.broker_order_id,
+                    "symbol": order_request.trading_symbol,
+                    "reason": str(exc),
+                    "action": "reconciliation_will_catch",
+                },
             )
             # Return the result — broker placed the order successfully.
             # Operator is alerted via the CRITICAL log above.

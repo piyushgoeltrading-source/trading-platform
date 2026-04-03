@@ -68,9 +68,28 @@ celery_app.conf.update(
 # Add new task modules here as phases are built.
 # ---------------------------------------------------------------------------
 celery_app.autodiscover_tasks([
-    "app.tasks.backtest_tasks",     # Phase 2
-    "app.tasks.ingestion_tasks",    # Phase 1
+    "app.tasks.backtest_tasks",          # Phase 2
+    "app.tasks.ingestion_tasks",         # Phase 1
+    "app.services.reconciliation_service",  # Phase 3 — position reconciliation
 ])
+
+# ---------------------------------------------------------------------------
+# Beat schedule — periodic tasks
+# Run the beat scheduler alongside the worker:
+#   celery -A worker.worker beat --loglevel=info
+# Or combined (dev only):
+#   celery -A worker.worker worker --beat --loglevel=info
+# ---------------------------------------------------------------------------
+from celery.schedules import crontab  # noqa: E402
+
+celery_app.conf.beat_schedule = {
+    # Reconcile DB positions vs broker every 5 minutes during market hours.
+    # The task itself checks is_market_open() and exits immediately if closed.
+    "reconcile-positions": {
+        "task": "tasks.reconcile_positions",
+        "schedule": crontab(minute="*/5"),
+    },
+}
 
 logger.info(
     "Celery worker initialised",

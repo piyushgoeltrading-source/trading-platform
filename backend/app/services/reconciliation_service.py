@@ -275,13 +275,18 @@ class ReconciliationService:
             Dict mapping (trading_symbol, exchange, product_code) → net_qty.
             Only non-zero positions are included.
         """
-        # Trades store transaction_type as "BUY" or "SELL" string.
-        # Compute signed qty: BUY=+qty, SELL=-qty, then sum per instrument.
+        # Compute net signed quantity per instrument across ALL sides.
+        # BUY fills are positive, SELL fills are negative.
+        # Grouping by instrument only (not side) gives the true net position:
+        #   10 BUY + 10 SELL -> net_qty = 0  -> excluded by HAVING (position closed)
+        #   10 BUY +  5 SELL -> net_qty = 5  -> included (still open long)
+        # Grouping by (instrument, side) was wrong — it split closed positions
+        # into two rows with the same dict key, causing the second to overwrite
+        # the first and producing false discrepancies on every reconciliation run.
         rows = await db.execute(
             text("""
                 SELECT
                     o.instrument,
-                    o.side,
                     SUM(
                         CASE WHEN o.side = 'BUY'
                             THEN t.fill_qty
@@ -291,7 +296,7 @@ class ReconciliationService:
                 FROM trades t
                 JOIN orders o ON t.order_id = o.id
                 WHERE t.user_id = :user_id
-                GROUP BY o.instrument, o.side
+                GROUP BY o.instrument
                 HAVING SUM(
                     CASE WHEN o.side = 'BUY'
                         THEN t.fill_qty

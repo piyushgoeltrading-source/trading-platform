@@ -1,129 +1,125 @@
 """
-app/core/logging.py
+app/core/config.py
 
-Structured Logging — PiyushTrade
-====================================
-All log records include:
-  - timestamp (UTC ISO 8601)
-  - module name
-  - event type (via `event` key in `extra`)
-  - relevant IDs (user_id, strategy_id) when available
+Application Configuration — PiyushTrade
+==========================================
+All application-wide settings are defined here.
 
-Log all:
-  - WebSocket reconnects
-  - Feed degradation
-  - Redis failures
-  - Data validation failures
-  - Backpressure drops
-
-Usage:
-    from app.core.logging import get_structured_logger
-    logger = get_structured_logger(__name__)
-    logger.info("tick written", extra={"event": "tick_written", "instrument_token": 12345})
+RULES:
+  - REDIS_KEY_TTL_SECONDS must ALWAYS be greater than REDIS_STALENESS_THRESHOLD_SECONDS.
+    This invariant is validated at startup.
+  - All timestamps in Redis use UTC epoch (float). Never IST.
+  - NSE holiday calendar is the authoritative source for market hours logic.
+  - Never add broker credentials here — those belong in secrets management.
+  - bcrypt is pinned to 4.0.1. DO NOT upgrade. passlib is incompatible with 4.1+.
 """
 
-import json
-import logging
-import sys
-from datetime import timezone, datetime
-from typing import Any
+from __future__ import annotations
+
+from pydantic_settings import BaseSettings
 
 
-class _UTCISOFormatter(logging.Formatter):
-    """
-    JSON log formatter.
+class Settings(BaseSettings):
+    # -------------------------------------------------------------------------
+    # Database
+    # -------------------------------------------------------------------------
+    DATABASE_URL: str = "postgresql+psycopg2://piyu:%40password@localhost:5432/piyushtrade"
+    # Note: @ in password must be encoded as %40 in .env DATABASE_URL
+    # Use postgresql+psycopg2:// here — database.py derives the asyncpg URL automatically.
 
-    Output format per line:
-    {
-        "timestamp": "2025-03-29T10:15:30.123456Z",
-        "level": "INFO",
-        "module": "options_service",
-        "event": "feed_degraded",
-        "message": "...",
-        ... (any extra fields)
-    }
-    """
+    # -------------------------------------------------------------------------
+    # Redis
+    # -------------------------------------------------------------------------
+    REDIS_URL: str = "redis://localhost:6379/0"
 
-    def format(self, record: logging.LogRecord) -> str:
-        # UTC timestamp, always
-        utc_dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
-        timestamp = utc_dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    # CRITICAL: TTL must always be > staleness threshold.
+    # This invariant is enforced at startup and in the ingestor before every write.
+    REDIS_KEY_TTL_SECONDS: int = 15         # How long a key lives in Redis
+    REDIS_STALENESS_THRESHOLD_SECONDS: int = 5  # How old is "too old" during market hours
 
-        payload: dict[str, Any] = {
-            "timestamp": timestamp,
-            "level": record.levelname,
-            "module": record.name,
-            "event": getattr(record, "event", "unspecified"),
-            "message": record.getMessage(),
-        }
+    # -------------------------------------------------------------------------
+    # JWT / Security
+    # -------------------------------------------------------------------------
+    SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION_USE_32_BYTES_MIN"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-        # Optional contextual IDs — included only when present
-        for field in ("user_id", "strategy_id", "instrument_token", "task_id"):
-            val = getattr(record, field, None)
-            if val is not None:
-                payload[field] = val
+    # -------------------------------------------------------------------------
+    # Celery
+    # -------------------------------------------------------------------------
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
-        # Absorb any remaining `extra` fields
-        skip = {
-            "args", "created", "exc_info", "exc_text", "filename",
-            "funcName", "levelname", "levelno", "lineno", "message",
-            "module", "msecs", "msg", "name", "pathname", "process",
-            "processName", "relativeCreated", "stack_info", "taskName",
-            "thread", "threadName",
-            # fields we already handled
-            "event", "user_id", "strategy_id", "instrument_token", "task_id",
-        }
-        for key, value in record.__dict__.items():
-            if key not in skip:
-                payload[key] = value
+    # -------------------------------------------------------------------------
+    # AWS / S3
+    # -------------------------------------------------------------------------
+    AWS_REGION: str = "ap-south-1"
+    S3_BUCKET_BACKTEST: str = "piyushtrade-backtest-results"
 
-        if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+    # -------------------------------------------------------------------------
+    # NSE Holiday Calendar
+    # NSE-declared trading holidays for the current year.
+    # Format: "YYYY-MM-DD" strings.
+    # Update this list annually. is_market_open() in time_utils.py uses this.
+    # Source: https://www.nseindia.com/resources/exchange-communication-holidays
+    # -------------------------------------------------------------------------
+    NSE_HOLIDAYS: list[str] = [
+        # 2025 NSE Holidays
+        "2025-01-26",  # Republic Day
+        "2025-02-26",  # Mahashivratri
+        "2025-03-14",  # Holi
+        "2025-03-31",  # Id-Ul-Fitr (Ramzan Id)
+        "2025-04-10",  # Shri Mahavir Jayanti
+        "2025-04-14",  # Dr. Baba Saheb Ambedkar Jayanti
+        "2025-04-18",  # Good Friday
+        "2025-05-01",  # Maharashtra Day
+        "2025-08-15",  # Independence Day
+        "2025-08-27",  # Ganesh Chaturthi
+        "2025-10-02",  # Mahatma Gandhi Jayanti
+        "2025-10-02",  # Dussehra
+        "2025-10-21",  # Diwali - Laxmi Puja
+        "2025-10-22",  # Diwali - Balipratipada
+        "2025-11-05",  # Prakash Gurpurb Sri Guru Nanak Dev Ji
+        "2025-12-25",  # Christmas
+        # 2026 NSE Holidays (update when NSE publishes)
+        "2026-01-26",  # Republic Day
+        "2026-03-20",  # Holi (tentative)
+        "2026-04-03",  # Good Friday (tentative)
+        "2026-08-15",  # Independence Day
+        "2026-10-02",  # Mahatma Gandhi Jayanti
+        "2026-12-25",  # Christmas
+    ]
 
-        return json.dumps(payload, default=str)
+    # -------------------------------------------------------------------------
+    # Logging
+    # -------------------------------------------------------------------------
+    LOG_LEVEL: str = "INFO"
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        case_sensitive = True
 
 
-def get_structured_logger(name: str) -> logging.Logger:
-    """
-    Return a named logger configured with JSON structured output to stdout.
-
-    Calling this multiple times with the same name is safe — the handler
-    is only attached once.
-    """
-    log = logging.getLogger(name)
-
-    if not log.handlers:
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(_UTCISOFormatter())
-        log.addHandler(handler)
-        log.propagate = False
-
-    # Respect LOG_LEVEL from environment; default INFO
-    import os
-    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
-    log.setLevel(getattr(logging, level_name, logging.INFO))
-
-    return log
+settings = Settings()
 
 
 # ---------------------------------------------------------------------------
-# Convenience: module-level root logger setup
-# Call this once from app startup (main.py).
+# Startup invariant: TTL must always be > staleness threshold
 # ---------------------------------------------------------------------------
-
-def configure_root_logging() -> None:
+def _validate_redis_config() -> None:
     """
-    Configure the root logger for the application.
-    Call once at startup before any other imports that log.
+    Validate that Redis TTL and staleness threshold are consistent.
+    Called at module import time so misconfiguration is caught immediately.
     """
-    root = logging.getLogger()
-    if root.handlers:
-        root.handlers.clear()
+    if settings.REDIS_KEY_TTL_SECONDS <= settings.REDIS_STALENESS_THRESHOLD_SECONDS:
+        raise RuntimeError(
+            f"CONFIGURATION ERROR: REDIS_KEY_TTL_SECONDS ({settings.REDIS_KEY_TTL_SECONDS}) "
+            f"must be greater than REDIS_STALENESS_THRESHOLD_SECONDS "
+            f"({settings.REDIS_STALENESS_THRESHOLD_SECONDS}). "
+            "A key must live in Redis longer than the staleness window, otherwise "
+            "fresh keys will expire before clients can detect staleness."
+        )
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(_UTCISOFormatter())
-    root.addHandler(handler)
 
-    import os
-    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
-    root.setLevel(getattr(logging, level_name, logging.INFO))
+_validate_redis_config()
